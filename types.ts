@@ -8,7 +8,7 @@ export enum UnitType {
   // Zerg Units
   MELEE = 'MELEE',
   RANGED = 'RANGED',
-  QUEEN = 'QUEEN', // New Production Unit
+  QUEEN = 'QUEEN', // The actual unit that can fight
 
   // Human Units
   HUMAN_MARINE = 'HUMAN_MARINE',      // 标准步枪兵
@@ -19,7 +19,7 @@ export enum UnitType {
 }
 
 export enum HiveSection {
-  HYPERTROPHY = 'HYPERTROPHY',
+  EVOLUTION = 'EVOLUTION', // Formerly HYPERTROPHY
   GRAFTING = 'GRAFTING',
   SEQUENCE = 'SEQUENCE',
   METABOLISM = 'METABOLISM',
@@ -45,10 +45,12 @@ export interface UnitConfig {
         height: number;
         color: number;
     };
-    cost: {
+    baseCost: {
         biomass: number;
         minerals: number;
         larva: number;
+        dna: number;
+        time: number; // Seconds to produce
     };
     growthFactors: {
         hp: number;
@@ -63,8 +65,8 @@ export interface UnitConfig {
 
 export interface PluginStatModifier {
     stat: 'hp' | 'damage' | 'speed' | 'attackSpeed' | 'critChance' | 'critDamage' | 'elementalDmg';
-    value: number; // The scalar value. Logic: Final = Value * (1 + rank) usually, or simple scaling.
-    isFlat?: boolean; // If true, adds directly (e.g. +10 HP). Default false (percentage).
+    value: number; 
+    isFlat?: boolean; 
     element?: 'PHYSICAL' | 'TOXIN' | 'FIRE' | 'ICE' | 'ELECTRIC';
 }
 
@@ -73,20 +75,20 @@ export interface BioPluginConfig {
     name: string;
     description: string;
     polarity: Polarity;
-    baseCost: number; // Load cost at rank 0
+    baseCost: number; 
     costPerRank: number;
     maxRank: number;
     rarity: 'COMMON' | 'RARE' | 'LEGENDARY';
     stats: PluginStatModifier[];
-    statGrowth: number; // Multiplier logic. For simplicity: TotalValue = baseValue * (1 + rank * statGrowth)
+    statGrowth: number; 
 }
 
 // --- SAVE DATA (Dynamic) ---
 
 export interface Resources {
     biomass: number;
-    minerals: number; // New: High tier resource
-    larva: number;    // New: Production limiter
+    minerals: number; 
+    larva: number;    
     dna: number;
     mutagen: number;
 }
@@ -102,6 +104,13 @@ export interface UnitState {
     level: number;
     // Array of instanceIds. Null means empty slot.
     loadout: (string | null)[];
+    
+    // PRODUCTION STATE
+    cap: number;          // Current max limit for this unit
+    capLevel: number;     // Level of Cap Upgrade
+    efficiencyLevel: number; // Level of Cost Reduction
+    isProducing: boolean; // Toggle switch
+    productionProgress: number; // 0 to 1
 }
 
 export interface HiveState {
@@ -111,22 +120,23 @@ export interface HiveState {
     unitStockpile: Record<UnitType, number>; // Ready-to-deploy units
     
     production: {
-        spawnRateLevel: number;
-        populationCapBase: number; // DEPRECATED: Now calculated from maxSupplyLevel
-        larvaCapBase: number;      // Max larva count
-        unitWeights: Record<UnitType, number>; // Normalized 0-1
+        larvaCapBase: number;      
+        
+        // Queen Logic
+        queenIntervalLevel: number; // Reduces time between larva spawns
+        queenAmountLevel: number;   // Increases larva per spawn
+        queenTimer: number;         // Runtime timer
     };
     metabolism: {
         // New Organ System
-        miningLevel: number;     // Minerals Gen
-        digestLevel: number;     // Minerals -> Bio
-        centrifugeLevel: number; // Bio -> DNA
-        hiveCoreLevel: number;   // Bio -> Larva Base
+        miningLevel: number;     
+        digestLevel: number;     
+        centrifugeLevel: number; 
+        hiveCoreLevel: number;   
         
         storageLevel: number;
-        maxSupplyLevel: number;
+        maxSupplyLevel: number; // DEPRECATED but kept for migration safety
         
-        // Deprecated fields kept for type safety during migration
         passiveGenLevel?: number;
         recycleLevel?: number;
         larvaGenLevel?: number;
@@ -141,7 +151,7 @@ export interface HiveState {
 export interface RegionState {
     id: number;
     isUnlocked: boolean;
-    devourProgress: number; // 0 to 100
+    devourProgress: number; 
 }
 
 export interface WorldState {
@@ -178,7 +188,6 @@ export interface UnitRuntimeStats {
     height: number;
     color: number;
     
-    // Advanced Stats
     critChance: number;
     critDamage: number;
     element: 'PHYSICAL' | 'TOXIN' | 'FIRE' | 'ICE' | 'ELECTRIC';
@@ -201,23 +210,22 @@ export interface GameModifiers {
 }
 
 export interface GameStateSnapshot {
-    resources: number; // Legacy biomass display
+    resources: number; 
     distance: number;
     unitCountZerg: number;
     unitCountHuman: number;
     
-    // New stats for HUD
     stockpileMelee: number;
     stockpileRanged: number;
     stockpileTotal: number;
-    populationCap: number;
+    populationCap: number; // Calculated dynamically
     
     isPaused: boolean;
 }
 
 export interface EnemySpawnConfig {
     type: UnitType;
-    weight: number; // 0.1 to 1.0 relative chance
+    weight: number; 
 }
 
 export interface RegionData {
@@ -226,9 +234,8 @@ export interface RegionData {
   x: number; 
   y: number; 
   difficultyMultiplier: number;
-  spawnTable?: EnemySpawnConfig[]; // Defines which enemies spawn here
+  spawnTable?: EnemySpawnConfig[]; 
   
-  // Merged state properties for UI convenience
   devourProgress: number;
   isUnlocked: boolean;
   isFighting: boolean;

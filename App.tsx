@@ -61,11 +61,6 @@ const App: React.FC = () => {
       };
   }, []);
 
-  // Passive Loop (Run when engine is NOT running) - BUT engine is now always running visuals
-  // We still need to tick data if we are in stockpile mode because GameEngine handles visual ticks, 
-  // but DataManager needs to tick logical resources.
-  // GameEngine now calls DataManager.updateTick internally in both modes.
-
   // Battle Loop Polling
   useEffect(() => {
       let animId: number;
@@ -115,14 +110,91 @@ const App: React.FC = () => {
       };
   });
 
-  const getSliderColor = (val: number) => val === 0 ? 'accent-gray-500' : (val < 0.5 ? 'accent-blue-400' : 'accent-blue-600');
-  const getWeight = (type: UnitType) => globalState.hive.production.unitWeights[type] || 0;
+  // Helper for Top Bar
+  const ResourceItem = ({ label, value, color }: { label: string, value: number, color: string }) => (
+      <div className="flex flex-col">
+          <span className="text-[10px] text-gray-500 uppercase tracking-widest">{label}</span>
+          <span className={`text-lg font-mono font-bold ${color} leading-none`}>
+              {Math.floor(value).toLocaleString()}
+          </span>
+      </div>
+  );
 
   return (
     <div className="flex flex-col w-full h-full bg-neutral-900 font-sans select-none overflow-hidden">
       
-      {/* CONTENT */}
-      <div className="flex-1 flex overflow-hidden">
+      {/* GLOBAL HEADER (Unified Resource Display) */}
+      <div className="h-16 bg-[#050505] border-b border-gray-800 flex items-center justify-between px-6 z-50 shrink-0">
+          <div className="flex items-center gap-8">
+              <h1 className="text-xl font-black text-white tracking-tighter uppercase italic">
+                  <span className="text-red-600">异种</span>起源
+              </h1>
+              
+              <div className="h-8 w-px bg-gray-800"></div>
+
+              <div className="flex gap-8">
+                  <ResourceItem label="生物质" value={globalState.resources.biomass} color="text-green-500" />
+                  <ResourceItem label="矿物质" value={globalState.resources.minerals} color="text-purple-400" />
+                  <ResourceItem label="DNA" value={globalState.resources.dna} color="text-blue-400" />
+              </div>
+          </div>
+
+          <div className="flex items-center gap-8">
+               {/* Larva Status */}
+               <div className="w-40">
+                    <div className="flex justify-between text-[10px] text-gray-500 uppercase mb-1">
+                        <span>幼虫 (Larva)</span>
+                        <span>{globalState.resources.larva.toFixed(1)} / {globalState.hive.production.larvaCapBase}</span>
+                    </div>
+                    <div className="w-full h-1.5 bg-gray-800 rounded-full overflow-hidden">
+                        <div className="h-full bg-orange-500 transition-all duration-300" 
+                             style={{ width: `${(globalState.resources.larva / globalState.hive.production.larvaCapBase) * 100}%` }} 
+                        />
+                    </div>
+               </div>
+
+               {/* Population */}
+               <div className="text-right">
+                   <div className="text-[10px] text-gray-500 uppercase">Swarm Size</div>
+                   <div className="text-lg font-mono font-bold text-orange-400 leading-none">
+                        {globalState.hive.unitStockpile[UnitType.MELEE] + globalState.hive.unitStockpile[UnitType.RANGED]}
+                        <span className="text-xs text-gray-600 ml-1">/ {DataManager.instance.getMaxPopulationCap()}</span>
+                   </div>
+               </div>
+               
+               <button 
+                  onClick={() => setIsHiveOpen(!isHiveOpen)}
+                  className={`px-4 py-2 rounded text-xs font-bold uppercase tracking-widest transition-colors border shadow-lg ${
+                      isHiveOpen 
+                      ? 'bg-red-900/50 text-red-200 border-red-500/50 hover:bg-red-800' 
+                      : 'bg-gray-800 text-gray-300 border-gray-700 hover:border-white hover:text-white'
+                  }`}
+               >
+                  {isHiveOpen ? 'Close Hive' : 'Manage Hive'}
+               </button>
+          </div>
+      </div>
+
+      {/* CONTENT AREA WRAPPER */}
+      <div className="flex-1 flex overflow-hidden relative">
+          {/* HIVE VIEW OVERLAY - MOVED HERE TO COVER ALL CONTENT */}
+          {isHiveOpen && (
+              <div className="absolute inset-0 z-50 bg-[#0b0b0b]/98 backdrop-blur-md overflow-hidden flex flex-col">
+                  <div className="flex-1 overflow-y-auto">
+                    <div className="p-8 max-w-7xl mx-auto h-full">
+                        <HiveView 
+                            globalState={globalState}
+                            onUpgrade={handleUpgradeUnit}
+                            onConfigChange={handleProductionConfigChange}
+                            onDigest={handleDigest}
+                            onClose={() => setIsHiveOpen(false)}
+                        />
+                    </div>
+                  </div>
+              </div>
+          )}
+
+          {/* SIDEBAR (World Map) */}
           <div className="w-1/3 min-w-[300px] border-r border-gray-800 relative z-10 bg-[#0a0a0a]">
                <div className="absolute top-0 left-0 w-full p-4 bg-gradient-to-b from-black/80 to-transparent pointer-events-none z-10">
                    <h2 className="text-gray-500 text-xs font-bold tracking-widest uppercase">全球行动</h2>
@@ -135,8 +207,8 @@ const App: React.FC = () => {
                 />
           </div>
 
+          {/* MAIN GAME VIEW */}
           <div className="flex-1 relative bg-black">
-                {/* Always render canvas to show stockpile when idle */}
                 <GameCanvas 
                     activeRegion={activeRegion}
                     onEngineInit={handleEngineInit} 
@@ -156,103 +228,11 @@ const App: React.FC = () => {
                             <div className="text-orange-500 text-6xl mb-4 animate-pulse opacity-80">☣️</div>
                             <h2 className="text-2xl font-black text-white uppercase tracking-widest mb-2">等待指令</h2>
                             <p className="text-gray-400 text-xs tracking-wider uppercase">虫群兵力储备中... 选择冲突区域以投放</p>
-                            <div className="mt-4 flex gap-4 text-xs font-mono text-gray-500">
-                                <span>MELEE: {globalState.hive.unitStockpile[UnitType.MELEE]}</span>
-                                <span>RANGED: {globalState.hive.unitStockpile[UnitType.RANGED]}</span>
-                            </div>
                         </div>
                     </div>
                 )}
           </div>
       </div>
-
-      {/* COMMAND CONSOLE */}
-      <div className="h-48 bg-[#0f0f11] border-t border-gray-800 flex relative z-20 shadow-2xl">
-          {/* LEFT: Resources & Stockpile Detail */}
-          <div className="w-1/3 min-w-[300px] p-6 border-r border-gray-800 flex flex-col justify-between bg-[#111]">
-               <div className="flex justify-between items-start">
-                   <div>
-                        <div className="text-xs text-gray-500 uppercase tracking-widest mb-1">生物质</div>
-                        <div className="text-2xl font-mono text-white font-bold tracking-tighter flex items-baseline gap-2">
-                           {Math.floor(globalState.resources.biomass)} 
-                           <span className="text-xs text-green-500 font-normal animate-pulse">▲</span>
-                        </div>
-                   </div>
-                   <div className="text-right">
-                        <div className="text-xs text-gray-500 uppercase tracking-widest mb-1">矿物质</div>
-                        <div className="text-2xl font-mono text-purple-300 font-bold tracking-tighter flex items-baseline justify-end gap-2">
-                           {Math.floor(globalState.resources.minerals)} 
-                           <span className="text-xs text-purple-500 font-normal">▲</span>
-                        </div>
-                   </div>
-               </div>
-
-               <div className="flex items-center gap-4 mt-2">
-                    <div className="flex-1">
-                        <div className="text-[10px] text-gray-500 uppercase tracking-widest mb-1">幼虫</div>
-                        <div className="w-full h-2 bg-gray-800 rounded-full overflow-hidden">
-                             <div className="h-full bg-orange-500 transition-all duration-300" 
-                                  style={{ width: `${(globalState.resources.larva / globalState.hive.production.larvaCapBase) * 100}%` }} 
-                             />
-                        </div>
-                    </div>
-                    <button onClick={() => setIsHiveOpen(true)} className="p-2 bg-gray-800 hover:bg-gray-700 rounded text-gray-400 hover:text-white transition-colors">
-                        ⚙️
-                    </button>
-               </div>
-          </div>
-
-          {/* RIGHT: Production Sliders & Counts */}
-          <div className="flex-1 p-6 flex gap-8 items-center bg-[#141414]">
-               <div className="w-32 text-right border-r border-gray-800 pr-4 h-full flex flex-col items-end justify-center">
-                   <div className="text-xs text-gray-500 font-bold uppercase tracking-widest leading-tight mb-2">兵力储备</div>
-                   <div className="text-2xl font-mono font-bold text-orange-400">
-                        {globalState.hive.unitStockpile[UnitType.MELEE] + globalState.hive.unitStockpile[UnitType.RANGED]}
-                        <span className="text-xs text-gray-600 ml-1">/ {globalState.hive.production.populationCapBase}</span>
-                   </div>
-               </div>
-               <div className="flex-1 flex gap-8">
-                    <div className="flex-1">
-                        <div className="flex justify-between mb-2">
-                            <span className="text-blue-400 font-bold uppercase text-xs tracking-wider flex items-center gap-2">
-                                <div className="w-2 h-2 bg-blue-500 rounded-full"></div>跳虫
-                                <span className="text-gray-600 ml-1">[{globalState.hive.unitStockpile[UnitType.MELEE]}]</span>
-                            </span>
-                            <span className="text-gray-400 text-xs font-mono">{Math.round(getWeight(UnitType.MELEE) * 100)}%</span>
-                        </div>
-                        <input type="range" min="0" max="1" step="0.1"
-                            value={getWeight(UnitType.MELEE)}
-                            onChange={(e) => handleProductionConfigChange(UnitType.MELEE, parseFloat(e.target.value))}
-                            className={`w-full h-2 bg-gray-800 rounded-lg appearance-none cursor-pointer ${getSliderColor(getWeight(UnitType.MELEE))}`}
-                        />
-                    </div>
-                    <div className="flex-1">
-                         <div className="flex justify-between mb-2">
-                            <span className="text-purple-400 font-bold uppercase text-xs tracking-wider flex items-center gap-2">
-                                <div className="w-2 h-2 bg-purple-500 rounded-full"></div>刺蛇
-                                <span className="text-gray-600 ml-1">[{globalState.hive.unitStockpile[UnitType.RANGED]}]</span>
-                            </span>
-                             <span className="text-gray-400 text-xs font-mono">{Math.round(getWeight(UnitType.RANGED) * 100)}%</span>
-                        </div>
-                        <input type="range" min="0" max="1" step="0.1"
-                            value={getWeight(UnitType.RANGED)}
-                            onChange={(e) => handleProductionConfigChange(UnitType.RANGED, parseFloat(e.target.value))}
-                            className={`w-full h-2 bg-gray-800 rounded-lg appearance-none cursor-pointer ${getSliderColor(getWeight(UnitType.RANGED))}`}
-                        />
-                    </div>
-               </div>
-          </div>
-      </div>
-
-      {isHiveOpen && (
-        <HiveView 
-            globalState={globalState}
-            onUpgrade={handleUpgradeUnit}
-            onConfigChange={handleProductionConfigChange}
-            onDigest={handleDigest}
-            onClose={() => setIsHiveOpen(false)}
-        />
-      )}
     </div>
   );
 };
