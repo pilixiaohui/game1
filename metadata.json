@@ -1,0 +1,5 @@
+{
+  "name": "异种起源：无尽洪流",
+  "description": "一个流体动力学战争游戏的灰盒原型。管理虫群生产，通过Roguelike卡牌进化，并向人类防线推进。",
+  "requestFramePermissions": []
+}
