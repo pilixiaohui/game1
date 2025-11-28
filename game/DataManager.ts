@@ -1,7 +1,8 @@
 
 
+
 import { GameSaveData, UnitType, UnitRuntimeStats, Resources, GameModifiers, BioPluginConfig, PluginInstance } from '../types';
-import { INITIAL_GAME_STATE, UNIT_CONFIGS, UNIT_UPGRADE_COST_BASE, RESOURCE_TICK_RATE_BASE, MINERAL_TICK_RATE_BASE, LARVA_REGEN_RATE, HATCHERY_PRODUCTION_INTERVAL, RECYCLE_REFUND_RATE, METABOLISM_UPGRADES, MAX_RESOURCES_BASE, BIO_PLUGINS } from '../constants';
+import { INITIAL_GAME_STATE, UNIT_CONFIGS, UNIT_UPGRADE_COST_BASE, HATCHERY_PRODUCTION_INTERVAL, RECYCLE_REFUND_RATE, METABOLISM_UPGRADES, MAX_RESOURCES_BASE, BIO_PLUGINS } from '../constants';
 
 // Exported so other files can use the type if needed
 export type Listener = (data: any) => void;
@@ -105,9 +106,16 @@ export class DataManager {
                      if (!unit.loadout) unit.loadout = [null, null, null, null, null];
                 });
 
-                // Fix missing maxSupplyLevel from old saves
-                if (!this.state.hive.metabolism.maxSupplyLevel) {
-                    this.state.hive.metabolism.maxSupplyLevel = 1;
+                // --- MIGRATION: Convert old metabolism to new organ system if needed ---
+                const meta = this.state.hive.metabolism;
+                if (!meta.miningLevel) meta.miningLevel = meta.passiveGenLevel || 1;
+                if (!meta.digestLevel) meta.digestLevel = 1;
+                if (!meta.centrifugeLevel) meta.centrifugeLevel = 1;
+                if (!meta.hiveCoreLevel) meta.hiveCoreLevel = meta.larvaGenLevel || 1;
+                // Init Queen if missing
+                if (!this.state.hive.unlockedUnits[UnitType.QUEEN]) {
+                    this.state.hive.unlockedUnits[UnitType.QUEEN] = { id: UnitType.QUEEN, level: 1, loadout: [null, null, null] };
+                    this.state.hive.production.unitWeights[UnitType.QUEEN] = 0;
                 }
                 
                 this.calculateOfflineProgress();
@@ -124,63 +132,16 @@ export class DataManager {
         const diffSeconds = (now - last) / 1000;
 
         if (diffSeconds > 60) {
-            // 1. Calculate Passive Gains
-            const bioRate = this.getPassiveResourceRate('biomass');
-            const minRate = this.getPassiveResourceRate('minerals');
+            // Simplified offline progress for new chain system
+            // We just give 50% of potential mining output to be safe
+            // Complex simulation of chain efficiency offline is skipped for prototype
             
-            let bioGained = Math.floor(bioRate * diffSeconds);
-            let minGained = Math.floor(minRate * diffSeconds);
+            const miningRate = this.state.hive.metabolism.miningLevel * METABOLISM_UPGRADES.MINING.RATE_PER_LEVEL;
+            const offlineMinerals = miningRate * diffSeconds * 0.5;
+            this.modifyResource('minerals', offlineMinerals);
             
-            // 2. Simulate Hatchery Consumption (Turn biomass/minerals into stockpile)
-            
-            const wMelee = this.state.hive.production.unitWeights[UnitType.MELEE] || 0;
-            const wRanged = this.state.hive.production.unitWeights[UnitType.RANGED] || 0;
-            const totalWeight = wMelee + wRanged || 1;
-            
-            // Average cost
-            const costMelee = UNIT_CONFIGS[UnitType.MELEE].cost;
-            const costRanged = UNIT_CONFIGS[UnitType.RANGED].cost;
-            
-            const avgBioCost = (costMelee.biomass * wMelee + costRanged.biomass * wRanged) / totalWeight;
-            const avgMinCost = (costMelee.minerals * wMelee + costRanged.minerals * wRanged) / totalWeight;
-
-            // How many could we have made with the BIOMASS we gained?
-            const potentialByBio = avgBioCost > 0 ? Math.floor((bioGained * 0.8) / avgBioCost) : 99999;
-            const potentialByMin = avgMinCost > 0 ? Math.floor((minGained * 0.8) / avgMinCost) : 99999;
-            
-            // Limit by the scarcest resource
-            const potentialUnits = Math.min(potentialByBio, potentialByMin);
-
-            // Apply Logic
-            const currentPop = this.getTotalStockpile();
-            const cap = this.getMaxPopulationCap();
-            const space = Math.max(0, cap - currentPop);
-            const unitsToSpawn = Math.min(potentialUnits, space);
-            
-            // Distribute units
-            const meleeCount = Math.floor(unitsToSpawn * (wMelee / totalWeight));
-            const rangedCount = unitsToSpawn - meleeCount;
-            
-            const bioUsed = (meleeCount * costMelee.biomass) + (rangedCount * costRanged.biomass);
-            const minUsed = (meleeCount * costMelee.minerals) + (rangedCount * costRanged.minerals);
-
-            if (unitsToSpawn > 0) {
-                this.state.hive.unitStockpile[UnitType.MELEE] += meleeCount;
-                this.state.hive.unitStockpile[UnitType.RANGED] += rangedCount;
-                
-                bioGained -= bioUsed;
-                minGained -= minUsed;
-                
-                console.log(`[Offline] Hatchery produced ${unitsToSpawn} units.`);
-            }
-
-            // Grant remaining resources
-            this.modifyResource('biomass', bioGained > 0 ? bioGained : 0);
-            this.modifyResource('minerals', minGained > 0 ? minGained : 0);
-            // Reset Larva to full on login
+            console.log(`[Offline] Gained approx ${offlineMinerals} minerals.`);
             this.state.resources.larva = this.state.hive.production.larvaCapBase;
-            
-            console.log(`[Offline] Gained ${bioGained} biomass, ${minGained} minerals.`);
         }
         this.state.player.lastSaveTime = now;
     }
@@ -188,7 +149,7 @@ export class DataManager {
     // --- Logic API ---
 
     public updateTick(dt: number) {
-        // 1. Metabolism: Produce Biomass, Minerals, Larva
+        // 1. Metabolism Chain: Minerals -> Biomass -> DNA / Larva
         this.updateMetabolism(dt);
         
         // 2. Hatchery: Produce Units into Stockpile
@@ -213,22 +174,7 @@ export class DataManager {
         
         this.events.emit('RESOURCE_CHANGED', { type, value: this.state.resources[type] });
     }
-
-    public getPassiveResourceRate(type: 'biomass' | 'minerals'): number {
-        const level = this.state.hive.metabolism.passiveGenLevel || 1;
-        // Effect: +20% per level over base
-        const multiplier = 1 + ((level - 1) * METABOLISM_UPGRADES.PASSIVE.EFFECT_PER_LEVEL);
-        
-        if (type === 'biomass') return RESOURCE_TICK_RATE_BASE * multiplier;
-        if (type === 'minerals') return MINERAL_TICK_RATE_BASE * multiplier;
-        return 0;
-    }
     
-    public getLarvaRegenRate(): number {
-        const level = this.state.hive.metabolism.larvaGenLevel || 1;
-        return METABOLISM_UPGRADES.LARVA.BASE_RATE + ((level - 1) * METABOLISM_UPGRADES.LARVA.RATE_PER_LEVEL);
-    }
-
     public getMaxResourceCap(): number {
         const level = this.state.hive.metabolism.storageLevel || 1;
         // Effect: Base + Level * Scaling
@@ -241,26 +187,69 @@ export class DataManager {
     }
 
     public getRecycleRate(): number {
-        const level = this.state.hive.metabolism.recycleLevel || 1;
-        // Effect: Base + Level * 5%
-        let rate = METABOLISM_UPGRADES.RECYCLE.BASE_RATE + ((level - 1) * METABOLISM_UPGRADES.RECYCLE.RATE_PER_LEVEL);
-        if (rate > METABOLISM_UPGRADES.RECYCLE.MAX_RATE) rate = METABOLISM_UPGRADES.RECYCLE.MAX_RATE;
-        return rate;
+        // Flat 50% for now in new system
+        return 0.5;
     }
 
     private updateMetabolism(dt: number) {
-        // Biomass
-        const bioAmount = this.getPassiveResourceRate('biomass') * dt;
-        if (bioAmount > 0) this.modifyResource('biomass', bioAmount);
+        const meta = this.state.hive.metabolism;
+        const res = this.state.resources;
         
-        // Minerals
-        const minAmount = this.getPassiveResourceRate('minerals') * dt;
-        if (minAmount > 0) this.modifyResource('minerals', minAmount);
+        // T0: MINING (Minerals)
+        const miningOutput = (meta.miningLevel || 1) * METABOLISM_UPGRADES.MINING.RATE_PER_LEVEL * dt;
+        this.modifyResource('minerals', miningOutput);
+
+        // T1: DIGESTION (Minerals -> Biomass)
+        const digestInputRate = (meta.digestLevel || 1) * METABOLISM_UPGRADES.DIGESTION.INPUT_RATE;
+        const digestOutputRate = (meta.digestLevel || 1) * METABOLISM_UPGRADES.DIGESTION.OUTPUT_RATE;
         
-        // Larva (Regen)
-        if (this.state.resources.larva < this.state.hive.production.larvaCapBase) {
-             const rate = this.getLarvaRegenRate();
-             this.modifyResource('larva', rate * dt);
+        const mineralsNeeded = digestInputRate * dt;
+        let digestEfficiency = 0;
+        
+        if (res.minerals >= mineralsNeeded) {
+            this.modifyResource('minerals', -mineralsNeeded);
+            digestEfficiency = 1;
+        } else if (res.minerals > 0) {
+            digestEfficiency = res.minerals / mineralsNeeded;
+            this.modifyResource('minerals', -res.minerals);
+        }
+        this.modifyResource('biomass', digestOutputRate * dt * digestEfficiency);
+
+        // T2: CENTRIFUGE (Biomass -> DNA)
+        // Only run if we have excess biomass (simple logic)
+        const centInputRate = (meta.centrifugeLevel || 1) * METABOLISM_UPGRADES.CENTRIFUGE.INPUT_RATE;
+        const centOutputRate = (meta.centrifugeLevel || 1) * METABOLISM_UPGRADES.CENTRIFUGE.OUTPUT_RATE;
+        
+        const bioNeededForCent = centInputRate * dt;
+        if (res.biomass >= bioNeededForCent) {
+            this.modifyResource('biomass', -bioNeededForCent);
+            this.modifyResource('dna', centOutputRate * dt);
+        }
+
+        // T3: HIVE CORE & QUEENS (Biomass -> Larva)
+        // Larva regen logic: Base Rate + Queen Bonus
+        // Requires Biomass consumption for the "Base Rate" part from Hive Core
+        const coreLevel = meta.hiveCoreLevel || 1;
+        const coreInputRate = coreLevel * METABOLISM_UPGRADES.HIVE_CORE.INPUT_RATE;
+        
+        const bioNeededForCore = coreInputRate * dt;
+        let coreEfficiency = 0;
+        
+        if (res.biomass >= bioNeededForCore) {
+            this.modifyResource('biomass', -bioNeededForCore);
+            coreEfficiency = 1;
+        } else if (res.biomass > 0) {
+            coreEfficiency = res.biomass / bioNeededForCore;
+            this.modifyResource('biomass', -res.biomass);
+        }
+
+        if (res.larva < this.state.hive.production.larvaCapBase) {
+             const baseRegen = (coreLevel * METABOLISM_UPGRADES.HIVE_CORE.BASE_LARVA_RATE) * coreEfficiency;
+             // Queen Bonus (Free, or assumes Queens feed themselves)
+             const queenCount = this.state.hive.unitStockpile[UnitType.QUEEN] || 0;
+             const queenBonus = queenCount * 0.2; // Each queen adds 0.2 larva/sec
+             
+             this.modifyResource('larva', (baseRegen + queenBonus) * dt);
         }
     }
 
@@ -268,42 +257,36 @@ export class DataManager {
     private updateHatchery(dt: number) {
         this.hatcheryTimer += dt;
         
-        // Production Cycle
         if (this.hatcheryTimer >= HATCHERY_PRODUCTION_INTERVAL) {
             this.hatcheryTimer = 0;
             
-            // 1. Check Population Cap
-            const totalStockpile = this.getTotalStockpile();
+            const totalStockpile = this.getTotalStockpile() + (this.state.hive.unitStockpile[UnitType.QUEEN] || 0);
             const cap = this.getMaxPopulationCap();
-            
-            // Also sync the old base variable for snapshots to avoid breaking
             this.state.hive.production.populationCapBase = cap;
             
-            if (totalStockpile >= cap) return; // Warehouse full
-
-            // 2. Check Larva (Must have at least 1 full larva)
+            if (totalStockpile >= cap) return; 
             if (this.state.resources.larva < 1) return;
 
-            // 3. Decide what to build (Weighted Random)
             const wMelee = this.state.hive.production.unitWeights[UnitType.MELEE] || 0;
             const wRanged = this.state.hive.production.unitWeights[UnitType.RANGED] || 0;
-            const totalWeight = wMelee + wRanged;
+            const wQueen = this.state.hive.production.unitWeights[UnitType.QUEEN] || 0;
+            const totalWeight = wMelee + wRanged + wQueen;
             
             if (totalWeight <= 0) return;
 
             const r = Math.random() * totalWeight;
             let targetType = UnitType.MELEE;
-            if (r > wMelee) targetType = UnitType.RANGED;
+            if (r < wMelee) targetType = UnitType.MELEE;
+            else if (r < wMelee + wRanged) targetType = UnitType.RANGED;
+            else targetType = UnitType.QUEEN;
 
-            // 4. Check Cost
             const cost = UNIT_CONFIGS[targetType].cost;
             if (this.state.resources.biomass >= cost.biomass && 
                 this.state.resources.minerals >= cost.minerals) {
                 
-                // 5. Manufacture
                 this.modifyResource('biomass', -cost.biomass);
                 this.modifyResource('minerals', -cost.minerals);
-                this.modifyResource('larva', -cost.larva); // Consumes 1 larva
+                this.modifyResource('larva', -cost.larva);
                 
                 this.state.hive.unitStockpile[targetType] += 1;
                 this.events.emit('STOCKPILE_CHANGED', this.state.hive.unitStockpile);
@@ -333,6 +316,38 @@ export class DataManager {
         this.events.emit('STOCKPILE_CHANGED', this.state.hive.unitStockpile);
         this.saveGame();
     }
+    
+    public prestige() {
+        // Calculate Mutagen Reward
+        // Formula: sqrt(Biomass / 100) - simple version
+        const sacrifice = this.state.resources.biomass;
+        const reward = Math.floor(Math.sqrt(sacrifice / 10));
+        
+        if (reward <= 0 && this.state.player.prestigeLevel === 0) return; // Basic check
+
+        const newMutagen = this.state.resources.mutagen + reward;
+        const newPrestigeLevel = this.state.player.prestigeLevel + 1;
+        
+        // Keep inventory/cards (Roguelike element)
+        const keptPlugins = this.state.hive.inventory.plugins;
+        
+        // RESET
+        this.state = JSON.parse(JSON.stringify(INITIAL_GAME_STATE));
+        
+        // Restore kept items & Apply Prestige
+        this.state.resources.mutagen = newMutagen;
+        this.state.hive.inventory.plugins = keptPlugins;
+        this.state.player.prestigeLevel = newPrestigeLevel;
+        
+        // Ensure Queen weight is 0 initially to avoid stuck hatchery
+        this.state.hive.production.unitWeights[UnitType.QUEEN] = 0;
+
+        this.saveGame();
+        this.events.emit('RESOURCE_CHANGED', {});
+        this.events.emit('STOCKPILE_CHANGED', {});
+        // Force full reload of state in UI
+        window.location.reload(); 
+    }
 
     public getTotalStockpile(): number {
         return (this.state.hive.unitStockpile[UnitType.MELEE] || 0) + 
@@ -353,7 +368,6 @@ export class DataManager {
         const config = UNIT_CONFIGS[type];
         
         if (!config || !config.baseStats) {
-            // Safety fallback for incomplete unit configs (like Human types in UI context)
             return {
                 hp: 0, maxHp: 0, damage: 0, range: 0, speed: 0, attackSpeed: 1, 
                 width: 0, height: 0, color: 0, critChance: 0, critDamage: 0, element: 'PHYSICAL'
@@ -362,25 +376,24 @@ export class DataManager {
 
         const save = this.state.hive.unlockedUnits[type] || { id: type, level: 1, loadout: [] };
         
-        // 1. Level Multipliers
         const lvlMultHp = 1 + (save.level - 1) * config.growthFactors.hp;
         const lvlMultDmg = 1 + (save.level - 1) * config.growthFactors.damage;
         
-        // 2. Runtime Modifiers (Roguelike)
         const runMultHp = runtimeModifiers ? runtimeModifiers.maxHpMultiplier : 1.0;
         const runMultDmg = runtimeModifiers ? runtimeModifiers.damageMultiplier : 1.0;
 
-        // 3. Plugin Modifiers (Grafting)
+        // Mutagen global buff (Prestige)
+        const mutagenMult = 1 + (this.state.resources.mutagen * 0.1); 
+
         let pluginMultHp = 0;
         let pluginMultDmg = 0;
         let pluginMultSpeed = 0;
         let pluginMultAttackSpeed = 0;
-        let pluginFlatCritChance = 0; // 0 to 1
+        let pluginFlatCritChance = 0; 
         let pluginMultCritChance = 0;
         let pluginMultCritDmg = 0;
-        let element: UnitRuntimeStats['element'] = 'PHYSICAL'; // Default
+        let element: UnitRuntimeStats['element'] = 'PHYSICAL'; 
         
-        // Iterate equipped plugins
         if (save.loadout) {
             save.loadout.forEach(instanceId => {
                 if (!instanceId) return;
@@ -403,30 +416,27 @@ export class DataManager {
                     }
                     if (mod.stat === 'critDamage') pluginMultCritDmg += val;
                     if (mod.stat === 'elementalDmg' && mod.element) {
-                        element = mod.element; // Last equipped element overrides
-                        pluginMultDmg += val; // Add elemental dmg to total dmg scalar for now
+                        element = mod.element; 
+                        pluginMultDmg += val; 
                     }
                 });
             });
         }
 
-        // Final Calculation
         return {
-            hp: config.baseStats.hp * lvlMultHp * runMultHp * (1 + pluginMultHp),
-            maxHp: config.baseStats.hp * lvlMultHp * runMultHp * (1 + pluginMultHp),
-            damage: config.baseStats.damage * lvlMultDmg * runMultDmg * (1 + pluginMultDmg),
+            hp: config.baseStats.hp * lvlMultHp * runMultHp * (1 + pluginMultHp) * mutagenMult,
+            maxHp: config.baseStats.hp * lvlMultHp * runMultHp * (1 + pluginMultHp) * mutagenMult,
+            damage: config.baseStats.damage * lvlMultDmg * runMultDmg * (1 + pluginMultDmg) * mutagenMult,
             range: config.baseStats.range,
             speed: config.baseStats.speed * (1 + pluginMultSpeed),
             attackSpeed: Math.max(0.1, config.baseStats.attackSpeed / (1 + pluginMultAttackSpeed)), 
-            // NOTE: config.attackSpeed is Delay. So Higher Attack Speed Stat = Lower Delay.
-            // Formula: BaseDelay / (1 + Mod). 
             
             width: config.baseStats.width,
             height: config.baseStats.height,
             color: config.baseStats.color,
             
-            critChance: (0.05 + pluginFlatCritChance) * (1 + pluginMultCritChance), // Base 5%
-            critDamage: 1.5 + pluginMultCritDmg,      // Base 150% crit damage
+            critChance: (0.05 + pluginFlatCritChance) * (1 + pluginMultCritChance), 
+            critDamage: 1.5 + pluginMultCritDmg, 
             element: element
         };
     }
@@ -455,32 +465,23 @@ export class DataManager {
     
     // --- Metabolism Upgrade Logic ---
     
-    public getMetabolismUpgradeCost(type: 'passiveGenLevel' | 'recycleLevel' | 'storageLevel' | 'larvaGenLevel' | 'maxSupplyLevel'): number {
+    public getMetabolismUpgradeCost(type: 'miningLevel' | 'digestLevel' | 'centrifugeLevel' | 'hiveCoreLevel' | 'storageLevel' | 'maxSupplyLevel'): number {
         const level = this.state.hive.metabolism[type] || 1;
         let baseCost = 0;
         let factor = 1.0;
 
-        if (type === 'passiveGenLevel') {
-            baseCost = METABOLISM_UPGRADES.PASSIVE.BASE_COST;
-            factor = METABOLISM_UPGRADES.PASSIVE.COST_FACTOR;
-        } else if (type === 'recycleLevel') {
-            baseCost = METABOLISM_UPGRADES.RECYCLE.BASE_COST;
-            factor = METABOLISM_UPGRADES.RECYCLE.COST_FACTOR;
-        } else if (type === 'storageLevel') {
-            baseCost = METABOLISM_UPGRADES.STORAGE.BASE_COST;
-            factor = METABOLISM_UPGRADES.STORAGE.COST_FACTOR;
-        } else if (type === 'larvaGenLevel') {
-            baseCost = METABOLISM_UPGRADES.LARVA.BASE_COST;
-            factor = METABOLISM_UPGRADES.LARVA.COST_FACTOR;
-        } else if (type === 'maxSupplyLevel') {
-            baseCost = METABOLISM_UPGRADES.SUPPLY.BASE_COST;
-            factor = METABOLISM_UPGRADES.SUPPLY.COST_FACTOR;
-        }
+        // Map to constants
+        if (type === 'miningLevel') { baseCost = METABOLISM_UPGRADES.MINING.BASE_COST; factor = METABOLISM_UPGRADES.MINING.COST_FACTOR; }
+        else if (type === 'digestLevel') { baseCost = METABOLISM_UPGRADES.DIGESTION.BASE_COST; factor = METABOLISM_UPGRADES.DIGESTION.COST_FACTOR; }
+        else if (type === 'centrifugeLevel') { baseCost = METABOLISM_UPGRADES.CENTRIFUGE.BASE_COST; factor = METABOLISM_UPGRADES.CENTRIFUGE.COST_FACTOR; }
+        else if (type === 'hiveCoreLevel') { baseCost = METABOLISM_UPGRADES.HIVE_CORE.BASE_COST; factor = METABOLISM_UPGRADES.HIVE_CORE.COST_FACTOR; }
+        else if (type === 'storageLevel') { baseCost = METABOLISM_UPGRADES.STORAGE.BASE_COST; factor = METABOLISM_UPGRADES.STORAGE.COST_FACTOR; }
+        else if (type === 'maxSupplyLevel') { baseCost = METABOLISM_UPGRADES.SUPPLY.BASE_COST; factor = METABOLISM_UPGRADES.SUPPLY.COST_FACTOR; }
         
         return Math.floor(baseCost * Math.pow(factor, level - 1));
     }
     
-    public upgradeMetabolism(type: 'passiveGenLevel' | 'recycleLevel' | 'storageLevel' | 'larvaGenLevel' | 'maxSupplyLevel'): boolean {
+    public upgradeMetabolism(type: 'miningLevel' | 'digestLevel' | 'centrifugeLevel' | 'hiveCoreLevel' | 'storageLevel' | 'maxSupplyLevel'): boolean {
         const cost = this.getMetabolismUpgradeCost(type);
         if (this.state.resources.biomass >= cost) {
             this.modifyResource('biomass', -cost);
@@ -547,14 +548,12 @@ export class DataManager {
         const unit = this.state.hive.unlockedUnits[unitType];
         if (!unit) return;
         
-        // Remove from other slots if already equipped there
         if (instanceId) {
             const existingIdx = unit.loadout.indexOf(instanceId);
             if (existingIdx !== -1 && existingIdx !== slotIndex) {
                 unit.loadout[existingIdx] = null;
             }
             
-            // Check other units
             Object.values(this.state.hive.unlockedUnits).forEach(u => {
                  if (u.id === unitType) return;
                  const idx = u.loadout.indexOf(instanceId);
@@ -562,16 +561,13 @@ export class DataManager {
             });
         }
 
-        // Apply
         const old = unit.loadout[slotIndex];
         unit.loadout[slotIndex] = instanceId;
 
-        // Check Capacity
         const load = this.calculateLoad(unitType, unit.loadout);
-        const maxLoad = UNIT_CONFIGS[unitType].baseLoadCapacity; // Static cap for now
+        const maxLoad = UNIT_CONFIGS[unitType].baseLoadCapacity; 
 
         if (load > maxLoad) {
-            // Revert if over capacity
             unit.loadout[slotIndex] = old;
             console.warn("Cannot equip: Over capacity");
             return false;
@@ -589,7 +585,6 @@ export class DataManager {
         const t = BIO_PLUGINS[instance.templateId];
         if (instance.rank >= t.maxRank) return false;
 
-        // Cost logic: Biomass
         const cost = 50 * (instance.rank + 1);
         if (this.state.resources.biomass >= cost) {
             this.modifyResource('biomass', -cost);

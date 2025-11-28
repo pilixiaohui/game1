@@ -1,5 +1,6 @@
 
 
+
 import { UnitType, UnitConfig, RegionData, GameSaveData, Faction, BioPluginConfig, Polarity } from './types';
 
 export const SCREEN_PADDING = 100;
@@ -12,31 +13,46 @@ export const MILESTONE_DISTANCE = 1500;
 
 // Caps and Rates
 export const MAX_RESOURCES_BASE = 2000; 
-export const RESOURCE_TICK_RATE_BASE = 15; // Increased base income for better flow
-export const MINERAL_TICK_RATE_BASE = 5;   // Slower mineral gain
-export const LARVA_REGEN_RATE = 0.5;       // Base Larva per second (Legacy fallback)
+export const RESOURCE_TICK_RATE_BASE = 15; // Legacy base
+export const MINERAL_TICK_RATE_BASE = 5;   // Legacy base
+export const LARVA_REGEN_RATE = 0.5;       // Legacy base
 export const UNIT_UPGRADE_COST_BASE = 100;
 export const MAX_SCREEN_UNITS = 30; // Deployment valve limit (Visual density cap)
 export const HATCHERY_PRODUCTION_INTERVAL = 0.5; // Seconds between production attempts
 export const RECYCLE_REFUND_RATE = 0.8; // 80% refund on digest (Stockpile)
 
-// METABOLISM UPGRADES
+// METABOLISM UPGRADES (NEW ORGAN SYSTEM)
 export const METABOLISM_UPGRADES = {
-    PASSIVE: {
-        NAME: "菌毯瘤",
-        DESC: "加速生物质与矿物质的自然生成。",
-        BASE_COST: 150,
-        COST_FACTOR: 1.6,
-        EFFECT_PER_LEVEL: 0.2, // +20% per level
+    MINING: {
+        NAME: "采集触手",
+        DESC: "从深层地壳汲取矿物质。",
+        BASE_COST: 50,
+        COST_FACTOR: 1.5,
+        RATE_PER_LEVEL: 3, // +3 Minerals/sec per level
     },
-    RECYCLE: {
-        NAME: "食腐胃囊",
-        DESC: "提高战场阵亡单位的资源回收率。",
-        BASE_COST: 300,
+    DIGESTION: {
+        NAME: "消化池",
+        DESC: "消耗矿物质转化为生物质。",
+        BASE_COST: 100,
+        COST_FACTOR: 1.6,
+        INPUT_RATE: 4, // Consumes 4 Minerals/sec per level
+        OUTPUT_RATE: 2, // Produces 2 Biomass/sec per level
+    },
+    CENTRIFUGE: {
+        NAME: "基因离心机",
+        DESC: "消耗生物质提取DNA精华。",
+        BASE_COST: 500,
         COST_FACTOR: 2.0,
-        BASE_RATE: 0.1,
-        RATE_PER_LEVEL: 0.05, // +5% per level
-        MAX_RATE: 0.8,
+        INPUT_RATE: 10, // Consumes 10 Bio/sec per level
+        OUTPUT_RATE: 0.1, // Produces 0.1 DNA/sec per level
+    },
+    HIVE_CORE: {
+        NAME: "主巢核心",
+        DESC: "消耗生物质以维持幼虫孵化环境。",
+        BASE_COST: 200,
+        COST_FACTOR: 1.8,
+        INPUT_RATE: 5, // Consumes 5 Bio/sec per level
+        BASE_LARVA_RATE: 0.1, // +0.1 Larva/sec per level (Base)
     },
     STORAGE: {
         NAME: "能量泵",
@@ -44,14 +60,6 @@ export const METABOLISM_UPGRADES = {
         BASE_COST: 100,
         COST_FACTOR: 1.5,
         CAP_PER_LEVEL: 2000,
-    },
-    LARVA: {
-        NAME: "孵化池",
-        DESC: "加速幼虫的自然孵化速度。",
-        BASE_COST: 200,
-        COST_FACTOR: 1.8,
-        BASE_RATE: 0.5,
-        RATE_PER_LEVEL: 0.1, // +0.1 per level
     },
     SUPPLY: {
         NAME: "突触网络",
@@ -65,7 +73,7 @@ export const METABOLISM_UPGRADES = {
 
 // --- CONFIG TABLES ---
 
-export const PLAYABLE_UNITS = [UnitType.MELEE, UnitType.RANGED];
+export const PLAYABLE_UNITS = [UnitType.MELEE, UnitType.RANGED, UnitType.QUEEN];
 
 export const UNIT_CONFIGS: Record<UnitType, UnitConfig> = {
   [UnitType.MELEE]: {
@@ -88,11 +96,11 @@ export const UNIT_CONFIGS: Record<UnitType, UnitConfig> = {
     },
     baseLoadCapacity: 30,
     slots: [
-        { polarity: 'ATTACK' }, // Claws
-        { polarity: 'DEFENSE' }, // Carapace
-        { polarity: 'ATTACK' }, // Muscles
-        { polarity: 'FUNCTION' }, // Adrenal
-        { polarity: 'UNIVERSAL' }, // Core
+        { polarity: 'ATTACK' }, 
+        { polarity: 'DEFENSE' },
+        { polarity: 'ATTACK' }, 
+        { polarity: 'FUNCTION' }, 
+        { polarity: 'UNIVERSAL' }, 
     ]
   },
   [UnitType.RANGED]: {
@@ -117,13 +125,37 @@ export const UNIT_CONFIGS: Record<UnitType, UnitConfig> = {
     slots: [
         { polarity: 'ATTACK' }, 
         { polarity: 'DEFENSE' },
-        { polarity: 'FUNCTION' }, // Eyes
-        { polarity: 'FUNCTION' }, // Spines
+        { polarity: 'FUNCTION' }, 
+        { polarity: 'FUNCTION' }, 
         { polarity: 'UNIVERSAL' }, 
     ]
   },
-  // Humans don't need full config, but typescript expects it if we iterate keys. 
-  // We'll leave them undefined here or mock them if necessary, but logic uses HUMAN_STATS below.
+  [UnitType.QUEEN]: {
+    id: UnitType.QUEEN,
+    name: '虫后',
+    baseStats: {
+        hp: 300,
+        damage: 10,
+        range: 100,
+        speed: 50,
+        attackSpeed: 1.0,
+        width: 32,
+        height: 48,
+        color: 0xd946ef, // Fuchsia
+    },
+    cost: { biomass: 150, minerals: 50, larva: 1 },
+    growthFactors: {
+        hp: 0.1,
+        damage: 0.1,
+    },
+    baseLoadCapacity: 50,
+    slots: [
+        { polarity: 'UNIVERSAL' }, 
+        { polarity: 'FUNCTION' }, 
+        { polarity: 'DEFENSE' }, 
+    ]
+  },
+  // Humans
   [UnitType.HUMAN_MARINE]: {} as any,
   [UnitType.HUMAN_RIOT]: {} as any,
   [UnitType.HUMAN_PYRO]: {} as any,
@@ -370,12 +402,13 @@ export const INITIAL_REGIONS_CONFIG: RegionData[] = [
 ];
 
 export const INITIAL_GAME_STATE: GameSaveData = {
-    resources: { biomass: 200, minerals: 50, larva: 3, dna: 0, mutagen: 0 },
+    resources: { biomass: 0, minerals: 0, larva: 3, dna: 0, mutagen: 0 },
     hive: {
         unlockedUnits: {
             [UnitType.MELEE]: { id: UnitType.MELEE, level: 1, loadout: [null, null, null, null, null] },
             [UnitType.RANGED]: { id: UnitType.RANGED, level: 1, loadout: [null, null, null, null, null] },
-            // Humans (Placeholder)
+            [UnitType.QUEEN]: { id: UnitType.QUEEN, level: 1, loadout: [null, null, null] },
+            
             [UnitType.HUMAN_MARINE]: { id: UnitType.HUMAN_MARINE, level: 0, loadout: [] },
             [UnitType.HUMAN_RIOT]: { id: UnitType.HUMAN_RIOT, level: 0, loadout: [] },
             [UnitType.HUMAN_PYRO]: { id: UnitType.HUMAN_PYRO, level: 0, loadout: [] },
@@ -383,8 +416,9 @@ export const INITIAL_GAME_STATE: GameSaveData = {
             [UnitType.HUMAN_TANK]: { id: UnitType.HUMAN_TANK, level: 0, loadout: [] },
         },
         unitStockpile: {
-            [UnitType.MELEE]: 10, // Start with some units
-            [UnitType.RANGED]: 5,
+            [UnitType.MELEE]: 5, 
+            [UnitType.RANGED]: 0,
+            [UnitType.QUEEN]: 0,
             [UnitType.HUMAN_MARINE]: 0,
             [UnitType.HUMAN_RIOT]: 0,
             [UnitType.HUMAN_PYRO]: 0,
@@ -393,11 +427,12 @@ export const INITIAL_GAME_STATE: GameSaveData = {
         },
         production: {
             spawnRateLevel: 1,
-            populationCapBase: 200, // Reservoir capacity
-            larvaCapBase: 10,       // Larva capacity
+            populationCapBase: 200,
+            larvaCapBase: 10,
             unitWeights: { 
-                [UnitType.MELEE]: 0.7, 
-                [UnitType.RANGED]: 0.3,
+                [UnitType.MELEE]: 0.8, 
+                [UnitType.RANGED]: 0.2,
+                [UnitType.QUEEN]: 0.0,
                 [UnitType.HUMAN_MARINE]: 0,
                 [UnitType.HUMAN_RIOT]: 0,
                 [UnitType.HUMAN_PYRO]: 0,
@@ -406,19 +441,17 @@ export const INITIAL_GAME_STATE: GameSaveData = {
             },
         },
         metabolism: { 
-            passiveGenLevel: 1, 
-            recycleLevel: 1, 
+            miningLevel: 1,
+            digestLevel: 1,
+            centrifugeLevel: 1,
+            hiveCoreLevel: 1,
             storageLevel: 1,
-            larvaGenLevel: 1,
             maxSupplyLevel: 1,
         },
         inventory: { 
             consumables: {}, 
             plugins: [
-                // Starter Plugins
                 { instanceId: 'starter_1', templateId: 'chitin_growth', rank: 0 },
-                { instanceId: 'starter_2', templateId: 'adrenal_gland', rank: 0 },
-                { instanceId: 'starter_3', templateId: 'twitch_fibers', rank: 0 }
             ] 
         },
         globalBuffs: []

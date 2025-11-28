@@ -8,6 +8,7 @@ export enum UnitType {
   // Zerg Units
   MELEE = 'MELEE',
   RANGED = 'RANGED',
+  QUEEN = 'QUEEN', // New Production Unit
 
   // Human Units
   HUMAN_MARINE = 'HUMAN_MARINE',      // 标准步枪兵
@@ -116,11 +117,19 @@ export interface HiveState {
         unitWeights: Record<UnitType, number>; // Normalized 0-1
     };
     metabolism: {
-        passiveGenLevel: number;
-        recycleLevel: number;
+        // New Organ System
+        miningLevel: number;     // Minerals Gen
+        digestLevel: number;     // Minerals -> Bio
+        centrifugeLevel: number; // Bio -> DNA
+        hiveCoreLevel: number;   // Bio -> Larva Base
+        
         storageLevel: number;
-        larvaGenLevel: number; // New: Larva regen speed
-        maxSupplyLevel: number; // New: Population cap
+        maxSupplyLevel: number;
+        
+        // Deprecated fields kept for type safety during migration
+        passiveGenLevel?: number;
+        recycleLevel?: number;
+        larvaGenLevel?: number;
     };
     inventory: {
         consumables: Record<string, number>;
