@@ -86,10 +86,11 @@ export interface BioPluginConfig {
 // --- SAVE DATA (Dynamic) ---
 
 export interface Resources {
-    biomass: number;
+    biomass: number; // Organic Sludge
     minerals: number; 
+    enzymes: number; // New: Energy Layer
     larva: number;    
-    dna: number;
+    dna: number;     // Helix Sequence
     mutagen: number;
 }
 
@@ -127,20 +128,38 @@ export interface HiveState {
         queenAmountLevel: number;   // Increases larva per spawn
         queenTimer: number;         // Runtime timer
     };
+    
+    // New Metabolism Structure (v1.3 Design)
     metabolism: {
-        // New Organ System
-        miningLevel: number;     
-        digestLevel: number;     
-        centrifugeLevel: number; 
-        hiveCoreLevel: number;   
+        // TIER 1: MATTER
+        villiCount: number;
+        taprootCount: number;
+        geyserCount: number;
+        breakerCount: number;
+
+        // TIER 2: ENERGY
+        fermentingSacCount: number;
+        refluxPumpCount: number;
+        thermalCrackerCount: number;
+        fleshBoilerCount: number; // New
         
-        storageLevel: number;
-        maxSupplyLevel: number; // DEPRECATED but kept for migration safety
+        // Cracker Runtime State
+        crackerHeat: number; // 0 to 100
+        crackerOverheated: boolean;
+
+        // TIER 3: DATA
+        thoughtSpireCount: number;
+        hiveMindCount: number;
+        akashicRecorderCount: number; // New
         
-        passiveGenLevel?: number;
-        recycleLevel?: number;
-        larvaGenLevel?: number;
+        // Accumulators for discrete drops
+        spireAccumulator: number;
+
+        // Infrastructure
+        storageCount: number;
+        supplyCount: number;
     };
+
     inventory: {
         consumables: Record<string, number>;
         plugins: PluginInstance[];

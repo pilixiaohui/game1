@@ -1,4 +1,5 @@
 
+
 import { UnitType, UnitConfig, RegionData, GameSaveData, Faction, BioPluginConfig, Polarity } from './types';
 
 export const SCREEN_PADDING = 100;
@@ -10,7 +11,7 @@ export const COLLISION_BUFFER = 10;
 export const MILESTONE_DISTANCE = 1500;
 
 // Caps and Rates
-export const MAX_RESOURCES_BASE = 9999999; 
+export const MAX_RESOURCES_BASE = 2000000; 
 export const INITIAL_LARVA_CAP = 1000;
 export const RESOURCE_TICK_RATE_BASE = 15; 
 export const MINERAL_TICK_RATE_BASE = 5;   
@@ -23,52 +24,126 @@ export const CAP_UPGRADE_BASE = 50;
 export const EFFICIENCY_UPGRADE_BASE = 100;
 export const QUEEN_UPGRADE_BASE = 200;
 
-export const METABOLISM_UPGRADES = {
-    MINING: {
-        NAME: "采集触手",
-        DESC: "从深层地壳汲取矿物质。",
-        BASE_COST: 50,
-        COST_FACTOR: 1.5,
-        RATE_PER_LEVEL: 10,
+// METABOLISM FACILITIES (v1.3 Design)
+export const METABOLISM_FACILITIES = {
+    // TIER 1: MATTER (Organic Sludge/Biomass)
+    VILLI: {
+        NAME: "菌毯绒毛 (Villi)",
+        DESC: "最基础的吸收单元。每100个使产出+25%。",
+        BASE_COST: 15,
+        GROWTH: 1.07,
+        BASE_RATE: 1.0,
+        COST_RESOURCE: 'biomass'
     },
-    DIGESTION: {
-        NAME: "消化池",
-        DESC: "消耗矿物质转化为生物质。",
-        BASE_COST: 100,
-        COST_FACTOR: 1.6,
-        INPUT_RATE: 5, 
-        OUTPUT_RATE: 8, 
+    TAPROOT: {
+        NAME: "深钻根须 (Taproot)",
+        DESC: "共生供养：每根须使所有绒毛基础产出 +0.1。",
+        BASE_COST: 500, 
+        GROWTH: 1.10,
+        BASE_RATE: 12.0,
+        BONUS_TO_VILLI: 0.1,
+        COST_RESOURCE: 'biomass'
     },
-    CENTRIFUGE: {
-        NAME: "基因离心机",
-        DESC: "消耗生物质提取DNA精华。",
-        BASE_COST: 500,
-        COST_FACTOR: 2.0,
-        INPUT_RATE: 5, 
-        OUTPUT_RATE: 0.05, 
+    GEYSER: {
+        NAME: "酸蚀喷泉 (Acid Geyser)",
+        DESC: "解锁智能代谢（自动化）的阈值设施。",
+        BASE_COST: 12000, 
+        GROWTH: 1.12,
+        BASE_RATE: 85.0,
+        COST_RESOURCE: 'biomass'
     },
-    HIVE_CORE: {
-        NAME: "主巢核心",
-        DESC: "消耗生物质以维持幼虫孵化环境。",
-        BASE_COST: 200,
-        COST_FACTOR: 1.8,
-        INPUT_RATE: 2, 
-        BASE_LARVA_RATE: 0.1, 
+    BREAKER: {
+        NAME: "地壳破碎机 (Crust Breaker)",
+        DESC: "震荡过载：极高产出，但导致 0.05% 原浆流失。",
+        BASE_COST: 150000,
+        GROWTH: 1.15,
+        BASE_RATE: 650.0,
+        LOSS_RATE: 0.0005, // 0.05%
+        COST_RESOURCE: 'biomass'
     },
+
+    // TIER 2: ENERGY (Enzymes)
+    SAC: {
+        NAME: "发酵囊 (Fermentation Sac)",
+        DESC: "时间墙：转化原浆为活性酶。受吞吐量限制。",
+        BASE_COST: 10000, // Biomass cost
+        GROWTH: 1.15,
+        INPUT: 100, // Max Biomass Input per sec
+        OUTPUT: 1,  // Enzyme Output per sec (Base 1% efficiency)
+        COST_RESOURCE: 'biomass'
+    },
+    PUMP: {
+        NAME: "回流泵 (Reflux Pump)",
+        DESC: "解决饥荒：每级降低发酵囊 2 原浆消耗。",
+        BASE_COST: 2500, // Enzyme Cost
+        GROWTH: 1.15,
+        COST_REDUCTION: 2,
+        MIN_COST: 50,
+        COST_RESOURCE: 'enzymes'
+    },
+    CRACKER: {
+        NAME: "热能裂解堆 (Thermal Cracker)",
+        DESC: "过热熔毁：500 Bio -> 15 Enz。产生热量。",
+        BASE_COST: 25000, // Enzyme Cost
+        GROWTH: 1.20,
+        INPUT: 500,
+        OUTPUT: 15,
+        HEAT_GEN: 5, // Heat per sec
+        COOL_RATE: 10, // Cooling per sec when off
+        COST_RESOURCE: 'enzymes'
+    },
+    BOILER: {
+        NAME: "血肉锅炉 (Flesh Boiler)",
+        DESC: "后期循环：消耗 1 幼虫 -> 500 酶。",
+        BASE_COST: 100000, // Enzyme Cost
+        GROWTH: 1.25,
+        INPUT_LARVA: 1,
+        OUTPUT_ENZ: 500,
+        COST_RESOURCE: 'enzymes'
+    },
+
+    // TIER 3: DATA (DNA/Helix)
+    SPIRE: {
+        NAME: "神经尖塔 (Neural Spire)",
+        DESC: "离散掉落：极慢速解析基因序列。",
+        BASE_COST: 5000, // Enzyme Cost
+        GROWTH: 1.25,
+        BASE_RATE: 0.005, // 200s for 1 DNA
+        COST_RESOURCE: 'enzymes'
+    },
+    HIVE_MIND: {
+        NAME: "虫群意识网 (Hive Mind)",
+        DESC: "人口红利：基于总兵力计算。产出 = √总兵力",
+        BASE_COST: 50000, // Enzyme Cost
+        GROWTH: 1.30,
+        COST_RESOURCE: 'enzymes'
+    },
+    RECORDER: {
+        NAME: "阿卡西记录 (Akashic Recorder)",
+        DESC: "量子观测：尖塔产出时，15% 概率获得当前总量 1%。",
+        BASE_COST: 250000,
+        GROWTH: 1.50,
+        CHANCE: 0.15,
+        PERCENT: 0.01,
+        COST_RESOURCE: 'enzymes'
+    },
+
+    // INFRA
     STORAGE: {
-        NAME: "能量泵",
+        NAME: "能量泵 (Storage)",
         DESC: "增加资源存储上限。",
         BASE_COST: 100,
-        COST_FACTOR: 1.5,
-        CAP_PER_LEVEL: 2000,
+        GROWTH: 1.5,
+        CAP_PER_LEVEL: 5000,
+        COST_RESOURCE: 'biomass'
     },
     SUPPLY: {
-        NAME: "突触网络",
-        DESC: "扩展虫巢思维控制能力，提升兵力储备上限。",
+        NAME: "突触网络 (Supply)",
+        DESC: "提升兵力储备上限。",
         BASE_COST: 250,
-        COST_FACTOR: 1.5,
-        BASE_CAP: 200,
+        GROWTH: 1.5,
         CAP_PER_LEVEL: 50,
+        COST_RESOURCE: 'biomass'
     }
 };
 
@@ -90,7 +165,7 @@ export const UNIT_CONFIGS: Record<UnitType, UnitConfig> = {
         height: 24,
         color: 0x3b82f6,
     },
-    baseCost: { biomass: 15, minerals: 0, larva: 1, dna: 0, time: 2.0 },
+    baseCost: { biomass: 15, minerals: 5, larva: 1, dna: 0, time: 2.0 },
     growthFactors: {
         hp: 0.2, 
         damage: 0.2,
@@ -164,24 +239,35 @@ export const UNIT_CONFIGS: Record<UnitType, UnitConfig> = {
   [UnitType.HUMAN_TANK]: {} as any,
 };
 
-// BIO-PLUGINS DEFINITIONS (Abbreviated to avoid reprinting full list, assumes rest is same as before)
-// ... Keeping existing BIO_PLUGINS ... 
+// BIO-PLUGINS DEFINITIONS
 export const BIO_PLUGINS: Record<string, BioPluginConfig> = {
-    // A. Structure & Vitality (Defense - Blue)
     'chitin_growth': {
         id: 'chitin_growth', name: '几丁质增生', description: '硬化甲壳', polarity: 'DEFENSE',
         baseCost: 6, costPerRank: 1, maxRank: 5, rarity: 'COMMON',
         stats: [{ stat: 'hp', value: 0.2 }], statGrowth: 1 
     },
-    // ... (All other plugins remain unchanged) ...
+    'toxin_sac': {
+        id: 'toxin_sac', name: '毒素囊', description: '攻击附带毒素', polarity: 'ATTACK',
+        baseCost: 8, costPerRank: 2, maxRank: 5, rarity: 'COMMON',
+        stats: [{ stat: 'elementalDmg', value: 5, element: 'TOXIN', isFlat: true }], statGrowth: 0.5 
+    },
+    'metabolic_boost': {
+        id: 'metabolic_boost', name: '代谢加速', description: '移动速度提升', polarity: 'FUNCTION',
+        baseCost: 5, costPerRank: 1, maxRank: 3, rarity: 'COMMON',
+        stats: [{ stat: 'speed', value: 0.15 }], statGrowth: 0.5
+    },
+    'adrenal_surge': {
+        id: 'adrenal_surge', name: '肾上腺激增', description: '攻速大幅提升，但降低防御', polarity: 'ATTACK',
+        baseCost: 15, costPerRank: 3, maxRank: 5, rarity: 'RARE',
+        stats: [{ stat: 'attackSpeed', value: 0.25 }, { stat: 'hp', value: -0.1 }], statGrowth: 0.2
+    },
+    'regen_tissue': {
+        id: 'regen_tissue', name: '再生组织', description: '缓慢恢复生命值 (TODO)', polarity: 'DEFENSE',
+        baseCost: 12, costPerRank: 2, maxRank: 3, rarity: 'RARE',
+        stats: [{ stat: 'hp', value: 0.3 }], statGrowth: 0.5
+    }
 };
-// Adding dummy export to satisfy compiler if needed or just assume file is replaced
-// In actual response, I'll assume I don't need to reprint all plugins if I haven't changed them, 
-// but XML replacement replaces the WHOLE file. 
-// So I must include them.
-// RE-INCLUDING FULL PLUGIN LIST FOR SAFETY
 export { BIO_PLUGINS as EXISTING_PLUGINS } from './constants'; 
-// Actually I will just copy the relevant parts to keep file valid.
 
 // RE-DECLARING PLUGINS FROM PREVIOUS
 export const ELEMENT_COLORS = {
@@ -298,7 +384,7 @@ export const INITIAL_REGIONS_CONFIG: RegionData[] = [
 ];
 
 export const INITIAL_GAME_STATE: GameSaveData = {
-    resources: { biomass: 0, minerals: 0, larva: 1000, dna: 0, mutagen: 0 },
+    resources: { biomass: 50, minerals: 0, enzymes: 0, larva: 1000, dna: 0, mutagen: 0 }, // Start with 50 Biomass
     hive: {
         unlockedUnits: {
             [UnitType.MELEE]: { 
@@ -336,13 +422,30 @@ export const INITIAL_GAME_STATE: GameSaveData = {
             queenAmountLevel: 1,
             queenTimer: 0
         },
-        metabolism: { 
-            miningLevel: 1,
-            digestLevel: 1,
-            centrifugeLevel: 1,
-            hiveCoreLevel: 1,
-            storageLevel: 1,
-            maxSupplyLevel: 1,
+        metabolism: {
+            // Tier 1
+            villiCount: 1, // Start with 1 Villi
+            taprootCount: 0,
+            geyserCount: 0,
+            breakerCount: 0,
+            // Tier 2
+            fermentingSacCount: 0,
+            refluxPumpCount: 0,
+            thermalCrackerCount: 0,
+            fleshBoilerCount: 0,
+            
+            crackerHeat: 0,
+            crackerOverheated: false,
+
+            // Tier 3
+            thoughtSpireCount: 0,
+            hiveMindCount: 0,
+            akashicRecorderCount: 0,
+            
+            spireAccumulator: 0,
+            
+            storageCount: 0,
+            supplyCount: 0
         },
         inventory: { 
             consumables: {}, 

@@ -1,6 +1,7 @@
 
+
 import { GameSaveData, UnitType, UnitRuntimeStats, Resources, GameModifiers, BioPluginConfig, PluginInstance } from '../types';
-import { INITIAL_GAME_STATE, UNIT_CONFIGS, UNIT_UPGRADE_COST_BASE, RECYCLE_REFUND_RATE, METABOLISM_UPGRADES, MAX_RESOURCES_BASE, BIO_PLUGINS, CAP_UPGRADE_BASE, EFFICIENCY_UPGRADE_BASE, QUEEN_UPGRADE_BASE, INITIAL_LARVA_CAP } from '../constants';
+import { INITIAL_GAME_STATE, UNIT_CONFIGS, UNIT_UPGRADE_COST_BASE, RECYCLE_REFUND_RATE, METABOLISM_FACILITIES, MAX_RESOURCES_BASE, BIO_PLUGINS, CAP_UPGRADE_BASE, EFFICIENCY_UPGRADE_BASE, QUEEN_UPGRADE_BASE, INITIAL_LARVA_CAP } from '../constants';
 
 // Exported so other files can use the type if needed
 export type Listener = (data: any) => void;
@@ -65,6 +66,25 @@ export class DataManager {
                 const loaded = JSON.parse(json);
                 this.state = { ...INITIAL_GAME_STATE, ...loaded };
                 
+                // MIGRATION: Logic to handle old metabolism state vs new
+                if (!this.state.hive.metabolism.crackerHeat) {
+                    console.log("Migrating Metabolism to v1.3...");
+                    const oldMeta = this.state.hive.metabolism;
+                    this.state.hive.metabolism = JSON.parse(JSON.stringify(INITIAL_GAME_STATE.hive.metabolism));
+                    // Restore counts if they existed in previous compatible version, otherwise 0
+                    this.state.hive.metabolism.villiCount = oldMeta.villiCount || 1;
+                    this.state.hive.metabolism.taprootCount = oldMeta.taprootCount || 0;
+                    this.state.hive.metabolism.geyserCount = oldMeta.geyserCount || 0;
+                    this.state.hive.metabolism.breakerCount = oldMeta.breakerCount || 0;
+                    this.state.hive.metabolism.fermentingSacCount = oldMeta.fermentingSacCount || 0;
+                    this.state.hive.metabolism.refluxPumpCount = oldMeta.refluxPumpCount || 0;
+                    this.state.hive.metabolism.thermalCrackerCount = oldMeta.thermalCrackerCount || 0;
+                    this.state.hive.metabolism.thoughtSpireCount = oldMeta.thoughtSpireCount || 0;
+                    this.state.hive.metabolism.hiveMindCount = oldMeta.hiveMindCount || 0;
+                    this.state.hive.metabolism.storageCount = oldMeta.storageCount || 0;
+                    this.state.hive.metabolism.supplyCount = oldMeta.supplyCount || 0;
+                }
+
                 if (!this.state.hive.production.queenIntervalLevel) {
                     this.state.hive.production.queenIntervalLevel = 1;
                     this.state.hive.production.queenAmountLevel = 1;
@@ -112,7 +132,7 @@ export class DataManager {
         if (type === 'larva') {
             const max = this.state.hive.production.larvaCapBase;
             if (this.state.resources.larva > max) this.state.resources.larva = max;
-        } else if (type === 'biomass' || type === 'minerals') {
+        } else if (type === 'biomass' || type === 'minerals' || type === 'enzymes') {
             const cap = this.getMaxResourceCap();
             if (this.state.resources[type] > cap) {
                 this.state.resources[type] = cap;
@@ -124,8 +144,8 @@ export class DataManager {
     }
     
     public getMaxResourceCap(): number {
-        const level = this.state.hive.metabolism.storageLevel || 1;
-        return MAX_RESOURCES_BASE + ((level - 1) * METABOLISM_UPGRADES.STORAGE.CAP_PER_LEVEL);
+        const count = this.state.hive.metabolism.storageCount || 0;
+        return MAX_RESOURCES_BASE + (count * METABOLISM_FACILITIES.STORAGE.CAP_PER_LEVEL);
     }
     
     public getMaxPopulationCap(): number {
@@ -133,7 +153,8 @@ export class DataManager {
         Object.values(this.state.hive.unlockedUnits).forEach(u => {
             total += u.cap || 0;
         });
-        return total;
+        const supplyBonus = (this.state.hive.metabolism.supplyCount || 0) * METABOLISM_FACILITIES.SUPPLY.CAP_PER_LEVEL;
+        return total + supplyBonus;
     }
 
     public getRecycleRate(): number { return 0.5; }
@@ -142,28 +163,118 @@ export class DataManager {
         const meta = this.state.hive.metabolism;
         const res = this.state.resources;
         
-        const miningOutput = (meta.miningLevel || 1) * METABOLISM_UPGRADES.MINING.RATE_PER_LEVEL * dt;
-        this.modifyResource('minerals', miningOutput);
+        // --- TIER 1: MATTER (BIOMASS) ---
+        // I-1 Villi: 1.0 base. +25% (x1.25) for every 100 villi.
+        const clusterMultiplier = Math.pow(1.25, Math.floor(meta.villiCount / 100));
+        
+        // I-2 Taproot: Adds 0.1 flat to Villi Base per Taproot.
+        const taprootBonus = meta.taprootCount * METABOLISM_FACILITIES.TAPROOT.BONUS_TO_VILLI;
+        const villiBaseRate = METABOLISM_FACILITIES.VILLI.BASE_RATE + taprootBonus;
+        
+        const villiProd = meta.villiCount * villiBaseRate * clusterMultiplier;
+        const taprootProd = meta.taprootCount * METABOLISM_FACILITIES.TAPROOT.BASE_RATE;
+        const geyserProd = meta.geyserCount * METABOLISM_FACILITIES.GEYSER.BASE_RATE;
+        const breakerProd = meta.breakerCount * METABOLISM_FACILITIES.BREAKER.BASE_RATE;
+        
+        // I-4 Breaker Risk: 0.05% loss
+        const breakerLoss = meta.breakerCount * res.biomass * METABOLISM_FACILITIES.BREAKER.LOSS_RATE;
 
-        const digestInputRate = (meta.digestLevel || 1) * METABOLISM_UPGRADES.DIGESTION.INPUT_RATE;
-        const digestOutputRate = (meta.digestLevel || 1) * METABOLISM_UPGRADES.DIGESTION.OUTPUT_RATE;
-        const mineralsNeeded = digestInputRate * dt;
-        let digestEfficiency = 0;
-        if (res.minerals >= mineralsNeeded) {
-            this.modifyResource('minerals', -mineralsNeeded);
-            digestEfficiency = 1;
-        } else if (res.minerals > 0) {
-            digestEfficiency = res.minerals / mineralsNeeded;
-            this.modifyResource('minerals', -res.minerals);
+        const totalBiomassGen = (villiProd + taprootProd + geyserProd + breakerProd - breakerLoss) * dt;
+        this.modifyResource('biomass', totalBiomassGen);
+
+        // Minerals (Side product for now to keep game playable)
+        const mineralGen = (meta.taprootCount * 0.5 + meta.breakerCount * 5.0 + meta.villiCount * 0.1) * dt; 
+        this.modifyResource('minerals', mineralGen);
+
+        // --- TIER 2: ENERGY (ENZYMES) ---
+        
+        // II-1 Sac & II-2 Pump
+        // Cost: 100 Bio -> 1 Enz. Pump reduces cost by 2 (Min 50).
+        if (meta.fermentingSacCount > 0) {
+            let costPerEnzyme = 100 - (meta.refluxPumpCount * METABOLISM_FACILITIES.PUMP.COST_REDUCTION);
+            costPerEnzyme = Math.max(METABOLISM_FACILITIES.PUMP.MIN_COST, costPerEnzyme);
+            
+            // Max throughput check
+            const maxInput = meta.fermentingSacCount * METABOLISM_FACILITIES.SAC.INPUT * dt; // e.g. 100 * dt
+            const neededForMaxOutput = maxInput; 
+            
+            // We are limited by either: Resource Available OR Throughput Cap
+            const actualConsumed = Math.min(neededForMaxOutput, res.biomass);
+            
+            if (actualConsumed > 0) {
+                this.modifyResource('biomass', -actualConsumed);
+                const enzymesProduced = actualConsumed / costPerEnzyme; // Conversion ratio applied here
+                this.modifyResource('enzymes', enzymesProduced);
+            }
         }
-        this.modifyResource('biomass', digestOutputRate * dt * digestEfficiency);
 
-        const centInputRate = (meta.centrifugeLevel || 1) * METABOLISM_UPGRADES.CENTRIFUGE.INPUT_RATE;
-        const centOutputRate = (meta.centrifugeLevel || 1) * METABOLISM_UPGRADES.CENTRIFUGE.OUTPUT_RATE;
-        const bioNeededForCent = centInputRate * dt;
-        if (res.biomass >= bioNeededForCent) {
-            this.modifyResource('biomass', -bioNeededForCent);
-            this.modifyResource('dna', centOutputRate * dt);
+        // II-3 Thermal Cracker (Heat Logic)
+        if (meta.thermalCrackerCount > 0) {
+            if (meta.crackerOverheated) {
+                // Cooling Phase
+                meta.crackerHeat -= METABOLISM_FACILITIES.CRACKER.COOL_RATE * dt;
+                if (meta.crackerHeat <= 0) {
+                    meta.crackerHeat = 0;
+                    meta.crackerOverheated = false;
+                }
+            } else {
+                // Running Phase
+                const inputNeeded = meta.thermalCrackerCount * METABOLISM_FACILITIES.CRACKER.INPUT * dt;
+                
+                if (res.biomass >= inputNeeded) {
+                    this.modifyResource('biomass', -inputNeeded);
+                    this.modifyResource('enzymes', meta.thermalCrackerCount * METABOLISM_FACILITIES.CRACKER.OUTPUT * dt);
+                    
+                    meta.crackerHeat += METABOLISM_FACILITIES.CRACKER.HEAT_GEN * dt;
+                    if (meta.crackerHeat >= 100) {
+                        meta.crackerHeat = 100;
+                        meta.crackerOverheated = true;
+                    }
+                } else {
+                    // Not enough resources to run, so it cools down
+                    meta.crackerHeat = Math.max(0, meta.crackerHeat - METABOLISM_FACILITIES.CRACKER.COOL_RATE * dt);
+                }
+            }
+        }
+        
+        // II-4 Flesh Boiler (Larva -> Enzyme)
+        if (meta.fleshBoilerCount > 0) {
+             const larvaNeeded = meta.fleshBoilerCount * METABOLISM_FACILITIES.BOILER.INPUT_LARVA * dt;
+             if (res.larva >= larvaNeeded) {
+                 this.modifyResource('larva', -larvaNeeded);
+                 this.modifyResource('enzymes', meta.fleshBoilerCount * METABOLISM_FACILITIES.BOILER.OUTPUT_ENZ * dt);
+             }
+        }
+
+        // --- TIER 3: DATA (DNA) ---
+        
+        // III-1 Spire (Discrete Drops)
+        if (meta.thoughtSpireCount > 0) {
+            // Accumulate progress
+            meta.spireAccumulator += meta.thoughtSpireCount * METABOLISM_FACILITIES.SPIRE.BASE_RATE * dt;
+            
+            if (meta.spireAccumulator >= 1.0) {
+                const drops = Math.floor(meta.spireAccumulator);
+                meta.spireAccumulator -= drops;
+                this.modifyResource('dna', drops);
+                
+                // III-3 Recorder Logic (Quantum Observation)
+                if (meta.akashicRecorderCount > 0) {
+                    // Roll for each drop? Or just once per batch? Once per batch for simplicity.
+                    if (Math.random() < METABOLISM_FACILITIES.RECORDER.CHANCE) {
+                        const bonus = Math.floor(res.dna * METABOLISM_FACILITIES.RECORDER.PERCENT);
+                        if (bonus > 0) this.modifyResource('dna', bonus);
+                    }
+                }
+            }
+        }
+        
+        // III-2 Hive Mind (Continuous)
+        if (meta.hiveMindCount > 0) {
+             const totalPop = this.getTotalStockpile();
+             // Sqrt(Pop) * Count
+             const hiveMindGen = meta.hiveMindCount * Math.sqrt(totalPop) * dt;
+             this.modifyResource('dna', hiveMindGen);
         }
     }
     
@@ -371,7 +482,11 @@ export class DataManager {
     }
 
     public updateProductionConfig(type: UnitType, weight: number) { }
-    public getTotalStockpile(): number { return 0; }
+    
+    public getTotalStockpile(): number {
+         const s = this.state.hive.unitStockpile;
+         return Object.values(s).reduce((a, b) => a + b, 0);
+    }
     
     public calculateLoad(unitType: UnitType, loadout: (string | null)[]): number {
         let total = 0;
@@ -384,7 +499,7 @@ export class DataManager {
             let cost = t.baseCost + (instance.rank * t.costPerRank);
             const slotPolarity = slots[idx]?.polarity || 'UNIVERSAL';
             if (slotPolarity === t.polarity || slotPolarity === 'UNIVERSAL') {
-                cost = Math.ceil(cost / 2);
+                cost = Math.ceil(cost/2);
             }
             total += cost;
         });
@@ -484,32 +599,60 @@ export class DataManager {
         this.events.emit('REGION_PROGRESS', {id, progress: this.state.world.regions[id].devourProgress});
     }
 
-    public getMetabolismUpgradeCost(key: string): number {
-        const meta = this.state.hive.metabolism;
-        let config: any = null;
-        let currentLevel = 1;
+    public getMetabolismCost(key: string): { cost: number, resource: string } {
+        const meta: any = this.state.hive.metabolism;
+        const config: any = METABOLISM_FACILITIES[key as keyof typeof METABOLISM_FACILITIES];
+        
+        if (!config) return { cost: 999999, resource: 'biomass' };
 
-        if (key === 'miningLevel') { config = METABOLISM_UPGRADES.MINING; currentLevel = meta.miningLevel; }
-        else if (key === 'digestLevel') { config = METABOLISM_UPGRADES.DIGESTION; currentLevel = meta.digestLevel; }
-        else if (key === 'centrifugeLevel') { config = METABOLISM_UPGRADES.CENTRIFUGE; currentLevel = meta.centrifugeLevel; }
-        else if (key === 'hiveCoreLevel') { config = METABOLISM_UPGRADES.HIVE_CORE; currentLevel = meta.hiveCoreLevel; }
-        else if (key === 'storageLevel') { config = METABOLISM_UPGRADES.STORAGE; currentLevel = meta.storageLevel; }
-        else if (key === 'maxSupplyLevel') { config = METABOLISM_UPGRADES.SUPPLY; currentLevel = meta.maxSupplyLevel; }
-
-        if (!config) return 999999;
-        return Math.floor(config.BASE_COST * Math.pow(config.COST_FACTOR, currentLevel - 1));
+        // Map Key to Count Key
+        let countKey = '';
+        if (key === 'VILLI') countKey = 'villiCount';
+        else if (key === 'TAPROOT') countKey = 'taprootCount';
+        else if (key === 'GEYSER') countKey = 'geyserCount';
+        else if (key === 'BREAKER') countKey = 'breakerCount';
+        else if (key === 'SAC') countKey = 'fermentingSacCount';
+        else if (key === 'PUMP') countKey = 'refluxPumpCount';
+        else if (key === 'CRACKER') countKey = 'thermalCrackerCount';
+        else if (key === 'BOILER') countKey = 'fleshBoilerCount';
+        else if (key === 'SPIRE') countKey = 'thoughtSpireCount';
+        else if (key === 'HIVE_MIND') countKey = 'hiveMindCount';
+        else if (key === 'RECORDER') countKey = 'akashicRecorderCount';
+        else if (key === 'STORAGE') countKey = 'storageCount';
+        else if (key === 'SUPPLY') countKey = 'supplyCount';
+        
+        const count = meta[countKey] || 0;
+        const cost = Math.floor(config.BASE_COST * Math.pow(config.GROWTH, count));
+        
+        return { cost, resource: config.COST_RESOURCE };
     }
 
     public upgradeMetabolism(key: string) {
-        const cost = this.getMetabolismUpgradeCost(key);
-        if (this.state.resources.biomass >= cost) {
-            this.modifyResource('biomass', -cost);
-            const meta: any = this.state.hive.metabolism;
-            if (meta[key] !== undefined) {
-                meta[key]++;
-                this.saveGame();
-                this.events.emit('PRODUCTION_CHANGED', {});
-            }
+        const { cost, resource } = this.getMetabolismCost(key);
+        const res = this.state.resources;
+        
+        if ((res as any)[resource] >= cost) {
+             this.modifyResource(resource as keyof Resources, -cost);
+             
+             const meta: any = this.state.hive.metabolism;
+             let countKey = '';
+             if (key === 'VILLI') countKey = 'villiCount';
+             else if (key === 'TAPROOT') countKey = 'taprootCount';
+             else if (key === 'GEYSER') countKey = 'geyserCount';
+             else if (key === 'BREAKER') countKey = 'breakerCount';
+             else if (key === 'SAC') countKey = 'fermentingSacCount';
+             else if (key === 'PUMP') countKey = 'refluxPumpCount';
+             else if (key === 'CRACKER') countKey = 'thermalCrackerCount';
+             else if (key === 'BOILER') countKey = 'fleshBoilerCount';
+             else if (key === 'SPIRE') countKey = 'thoughtSpireCount';
+             else if (key === 'HIVE_MIND') countKey = 'hiveMindCount';
+             else if (key === 'RECORDER') countKey = 'akashicRecorderCount';
+             else if (key === 'STORAGE') countKey = 'storageCount';
+             else if (key === 'SUPPLY') countKey = 'supplyCount';
+
+             meta[countKey] = (meta[countKey] || 0) + 1;
+             this.saveGame();
+             this.events.emit('PRODUCTION_CHANGED', {});
         }
     }
 }

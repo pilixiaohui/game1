@@ -1,7 +1,8 @@
 
+
 import React, { useState } from 'react';
 import { GameSaveData, UnitType, HiveSection, Polarity } from '../types';
-import { UNIT_CONFIGS, METABOLISM_UPGRADES, BIO_PLUGINS, PLAYABLE_UNITS, MAX_RESOURCES_BASE } from '../constants';
+import { UNIT_CONFIGS, METABOLISM_FACILITIES, BIO_PLUGINS, PLAYABLE_UNITS, MAX_RESOURCES_BASE } from '../constants';
 import { DataManager } from '../game/DataManager';
 
 interface HiveViewProps {
@@ -22,7 +23,7 @@ const PolarityIcon = ({ type }: { type: Polarity }) => {
 }
 
 export const HiveView: React.FC<HiveViewProps> = ({ globalState, onUpgrade, onConfigChange, onDigest, onClose }) => {
-  const [activeSection, setActiveSection] = useState<HiveSection>(HiveSection.BIRTHING);
+  const [activeSection, setActiveSection] = useState<HiveSection>(HiveSection.METABOLISM);
   
   // Grafting State
   const [graftingUnit, setGraftingUnit] = useState<UnitType>(UnitType.MELEE);
@@ -45,186 +46,208 @@ export const HiveView: React.FC<HiveViewProps> = ({ globalState, onUpgrade, onCo
   );
 
   const renderMetabolism = () => {
-    // Helper to get current stats display
-    const getStats = (key: string, level: number) => {
-        const conf = METABOLISM_UPGRADES[key as keyof typeof METABOLISM_UPGRADES] as any;
-        if (!conf) return null;
-        
-        if (key === 'MINING') {
-            return (
-                <div className="text-xs space-y-1 bg-black/20 p-2 rounded border border-gray-800/50">
-                    <div className="flex justify-between items-center text-gray-400">
-                        <span>基础产出</span> 
-                        <span className="text-purple-400 font-mono font-bold">+{level * conf.RATE_PER_LEVEL}/s</span>
-                    </div>
-                </div>
-            );
-        }
-        if (key === 'DIGESTION') {
-             return (
-                <div className="text-xs space-y-1 bg-black/20 p-2 rounded border border-gray-800/50">
-                    <div className="flex justify-between text-gray-400">
-                        <span>消耗 (Input)</span> 
-                        <span className="text-purple-400 font-mono">-{level * conf.INPUT_RATE} Min/s</span>
-                    </div>
-                    <div className="flex justify-between text-gray-400">
-                        <span>产出 (Output)</span> 
-                        <span className="text-green-400 font-mono font-bold">+{level * conf.OUTPUT_RATE} Bio/s</span>
-                    </div>
-                    <div className="flex justify-between text-gray-500 border-t border-gray-700/50 pt-1 mt-1">
-                        <span>转化效率</span> 
-                        <span className="font-mono">{(conf.OUTPUT_RATE/conf.INPUT_RATE * 100).toFixed(0)}%</span>
-                    </div>
-                </div>
-            );
-        }
-        if (key === 'CENTRIFUGE') {
-             return (
-                <div className="text-xs space-y-1 bg-black/20 p-2 rounded border border-gray-800/50">
-                    <div className="flex justify-between text-gray-400">
-                        <span>消耗 (Input)</span> 
-                        <span className="text-green-400 font-mono">-{level * conf.INPUT_RATE} Bio/s</span>
-                    </div>
-                    <div className="flex justify-between text-gray-400">
-                        <span>产出 (Output)</span> 
-                        <span className="text-blue-400 font-mono font-bold">+{level * conf.OUTPUT_RATE} DNA/s</span>
-                    </div>
-                </div>
-            );
-        }
-        if (key === 'STORAGE') {
-             return (
-                <div className="text-xs space-y-1 bg-black/20 p-2 rounded border border-gray-800/50">
-                    <div className="flex justify-between text-gray-400">
-                        <span>总容量 (Cap)</span> 
-                        <span className="text-white font-mono">{(MAX_RESOURCES_BASE + (level - 1) * conf.CAP_PER_LEVEL).toLocaleString()}</span>
-                    </div>
-                </div>
-            );
-        }
-        if (key === 'SUPPLY') {
-             return (
-                <div className="text-xs space-y-1 bg-black/20 p-2 rounded border border-gray-800/50">
-                    <div className="flex justify-between text-gray-400">
-                        <span>兵力上限</span> 
-                        <span className="text-orange-400 font-mono">{conf.BASE_CAP + (level - 1) * conf.CAP_PER_LEVEL}</span>
-                    </div>
-                </div>
-            );
-        }
-        if (key === 'HIVE_CORE') {
-             return (
-                <div className="text-xs space-y-1 bg-black/20 p-2 rounded border border-gray-800/50">
-                     <div className="flex justify-between text-gray-400">
-                        <span>维护消耗</span> 
-                        <span className="text-green-400 font-mono">-{level * conf.INPUT_RATE} Bio/s</span>
-                    </div>
-                </div>
-            );
-        }
-        return null;
-    };
+    const meta = globalState.hive.metabolism;
     
-    // Grouping configuration
+    // Config Grouping based on V1.3 Design Doc
     const groups = [
         {
-            title: "矿物质循环 (Minerals)",
-            desc: "基础资源的采集与初步处理。",
-            color: "text-purple-400",
-            border: "border-purple-900/30",
-            bg: "bg-purple-900/5",
-            items: ['MINING']
+            id: 'MATTER',
+            name: '物质层 (Matter)',
+            sub: 'Organic Sludge',
+            color: 'text-green-400',
+            bg: 'bg-green-900/5',
+            border: 'border-green-500/20',
+            facilities: ['VILLI', 'TAPROOT', 'GEYSER', 'BREAKER']
         },
         {
-            title: "生物质合成 (Biomass)",
-            desc: "将无机物转化为有机组织的消化系统。",
-            color: "text-green-400",
-            border: "border-green-900/30",
-            bg: "bg-green-900/5",
-            items: ['DIGESTION']
+            id: 'ENERGY',
+            name: '能量层 (Energy)',
+            sub: 'Active Enzymes',
+            color: 'text-orange-400',
+            bg: 'bg-orange-900/5',
+            border: 'border-orange-500/20',
+            facilities: ['SAC', 'PUMP', 'CRACKER', 'BOILER']
         },
         {
-            title: "基因提取 (DNA)",
-            desc: "高级遗传物质的离心与提纯。",
-            color: "text-blue-400",
-            border: "border-blue-900/30",
-            bg: "bg-blue-900/5",
-            items: ['CENTRIFUGE']
+            id: 'DATA',
+            name: '资讯层 (Data)',
+            sub: 'Helix Sequence',
+            color: 'text-blue-400',
+            bg: 'bg-blue-900/5',
+            border: 'border-blue-500/20',
+            facilities: ['SPIRE', 'HIVE_MIND', 'RECORDER']
         },
         {
-            title: "基础设施 (Infrastructure)",
-            desc: "虫巢的核心维持与扩展系统。",
-            color: "text-gray-300",
-            border: "border-gray-700/50",
-            bg: "bg-gray-800/20",
-            items: ['STORAGE', 'SUPPLY', 'HIVE_CORE']
+            id: 'INFRA',
+            name: '基础设施 (Infra)',
+            sub: 'Storage & Supply',
+            color: 'text-gray-400',
+            bg: 'bg-gray-800/10',
+            border: 'border-gray-700/30',
+            facilities: ['STORAGE', 'SUPPLY']
         }
     ];
 
-    return (
-        <div className="animate-in fade-in slide-in-from-right-4 duration-300 pb-20 space-y-8">
-             <div className="mb-6">
-                <h3 className="text-2xl font-black text-green-500 uppercase tracking-widest mb-1">代谢工程</h3>
-                <p className="text-gray-500 text-sm">优化资源流转效率，建立自动化生产管线。</p>
-            </div>
-            
-            {groups.map((group, idx) => (
-                <div key={idx} className={`rounded-xl border ${group.border} ${group.bg} p-6`}>
-                    <div className="mb-6">
-                        <h4 className={`text-sm font-bold uppercase tracking-widest ${group.color} flex items-center gap-2 mb-1`}>
-                            <span className="w-1.5 h-1.5 rounded-full bg-current"></span>
-                            {group.title}
-                        </h4>
-                        <p className="text-[10px] text-gray-500 ml-3.5">{group.desc}</p>
+    const getFacilityStatus = (key: string) => {
+        const cost = DataManager.instance.getMetabolismCost(key);
+        let count = 0;
+        let statText: React.ReactNode = "";
+
+        // Count mapping
+        if (key === 'VILLI') { 
+            count = meta.villiCount; 
+            const synergy = Math.pow(1.25, Math.floor(count/100));
+            statText = (
+                <span>
+                    Base: {(count * METABOLISM_FACILITIES.VILLI.BASE_RATE).toFixed(1)}/s <br/>
+                    Cluster: <span className="text-green-300">x{synergy.toFixed(2)}</span>
+                </span>
+            );
+        }
+        else if (key === 'TAPROOT') { count = meta.taprootCount; statText = `Buff: Villi Base +${(count * 0.1).toFixed(1)}`; }
+        else if (key === 'GEYSER') { count = meta.geyserCount; statText = `Output: +${(count * METABOLISM_FACILITIES.GEYSER.BASE_RATE).toFixed(1)}/s`; }
+        else if (key === 'BREAKER') { count = meta.breakerCount; statText = `Out: +${(count * METABOLISM_FACILITIES.BREAKER.BASE_RATE).toFixed(0)} | Loss: ${(count * 0.05).toFixed(2)}%`; }
+        
+        else if (key === 'SAC') { 
+            count = meta.fermentingSacCount; 
+            const red = meta.refluxPumpCount * METABOLISM_FACILITIES.PUMP.COST_REDUCTION;
+            const finalCost = Math.max(50, 100 - red);
+            const eff = 1 / finalCost * 100;
+            statText = (
+                <span>
+                    Throughput: {count * 100} Bio/s <br/>
+                    Efficiency: <span className="text-orange-300">{eff.toFixed(2)}%</span>
+                </span>
+            ); 
+        }
+        else if (key === 'PUMP') { 
+            count = meta.refluxPumpCount; 
+            statText = `Sac Cost: -${count * 2} Bio`; 
+        }
+        else if (key === 'CRACKER') { 
+            count = meta.thermalCrackerCount;
+            // Heat Bar Visualization
+            const heatPct = meta.crackerHeat;
+            const isOverheated = meta.crackerOverheated;
+            statText = (
+                <div className="w-full mt-1">
+                    <div className="flex justify-between text-[8px] uppercase text-gray-400 mb-0.5">
+                        <span>{isOverheated ? 'OVERHEATED (COOLING)' : 'HEAT LEVEL'}</span>
+                        <span>{heatPct.toFixed(0)}%</span>
                     </div>
-                    
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                        {group.items.map(key => {
-                            let stateKey = '';
-                             if (key === 'MINING') stateKey = 'miningLevel';
-                            else if (key === 'DIGESTION') stateKey = 'digestLevel';
-                            else if (key === 'CENTRIFUGE') stateKey = 'centrifugeLevel';
-                            else if (key === 'HIVE_CORE') stateKey = 'hiveCoreLevel';
-                            else if (key === 'STORAGE') stateKey = 'storageLevel';
-                            else if (key === 'SUPPLY') stateKey = 'maxSupplyLevel';
-
-                            const currentLevel = (globalState.hive.metabolism as any)[stateKey] || 1;
-                            const config = METABOLISM_UPGRADES[key as keyof typeof METABOLISM_UPGRADES] as any;
-                            const cost = DataManager.instance.getMetabolismUpgradeCost(stateKey);
-                            const canAfford = globalState.resources.biomass >= cost;
-
-                            return (
-                                <div key={key} className="bg-[#0f1115] border border-gray-800 p-4 rounded-lg flex flex-col hover:border-gray-600 transition-colors group relative overflow-hidden">
-                                    <div className={`absolute top-0 left-0 w-0.5 h-full opacity-0 group-hover:opacity-100 transition-opacity ${group.color.replace('text', 'bg')}`}></div>
-                                    
-                                    <div className="flex justify-between items-start mb-2 pl-2">
-                                        <div className="font-bold text-gray-200">{config.NAME}</div>
-                                        <div className="text-[10px] bg-gray-800 text-gray-400 px-1.5 py-0.5 rounded font-mono border border-gray-700">Lv.{currentLevel}</div>
-                                    </div>
-                                    <div className="text-[10px] text-gray-500 mb-4 pl-2 h-8 leading-relaxed">{config.DESC}</div>
-                                    
-                                    <div className="mb-4 pl-2">
-                                        {getStats(key, currentLevel)}
-                                    </div>
-                                    
-                                    <button
-                                        onClick={() => DataManager.instance.upgradeMetabolism(stateKey)}
-                                        disabled={!canAfford}
-                                        className={`mt-auto w-full py-2.5 rounded text-[10px] font-bold uppercase flex items-center justify-center gap-2 transition-all border ${
-                                            canAfford 
-                                            ? 'bg-gray-800 hover:bg-gray-700 text-white border-gray-600 hover:border-white/50 shadow-lg' 
-                                            : 'bg-black/50 text-gray-600 border-gray-800 cursor-not-allowed'
-                                        }`}
-                                    >
-                                        <span>升级</span>
-                                        <span className={`font-mono ${canAfford ? 'text-green-500' : 'text-gray-600'}`}>{cost.toLocaleString()} Bio</span>
-                                    </button>
-                                </div>
-                            )
-                        })}
+                    <div className="w-full h-1.5 bg-gray-800 rounded-sm overflow-hidden">
+                        <div 
+                            className={`h-full transition-all duration-300 ${isOverheated ? 'bg-red-500 animate-pulse' : 'bg-orange-500'}`} 
+                            style={{ width: `${heatPct}%` }}
+                        />
                     </div>
                 </div>
-            ))}
+            );
+        }
+        else if (key === 'BOILER') { count = meta.fleshBoilerCount; statText = `Conv: ${count} Larva -> ${count * 500} Enz`; }
+        
+        else if (key === 'SPIRE') { 
+            count = meta.thoughtSpireCount; 
+            // Accumulator bar
+            const progress = meta.spireAccumulator * 100;
+            statText = (
+                <div className="w-full mt-1">
+                    <div className="flex justify-between text-[8px] uppercase text-gray-400 mb-0.5">
+                        <span>ANALYSIS</span>
+                        <span>{progress.toFixed(0)}%</span>
+                    </div>
+                    <div className="w-full h-1.5 bg-gray-800 rounded-sm overflow-hidden">
+                        <div 
+                            className="h-full bg-blue-500 transition-all duration-300" 
+                            style={{ width: `${progress}%` }}
+                        />
+                    </div>
+                </div>
+            );
+        }
+        else if (key === 'HIVE_MIND') { 
+            count = meta.hiveMindCount; 
+            const pop = DataManager.instance.getTotalStockpile();
+            statText = `Calc: +${(count * Math.sqrt(pop)).toFixed(2)} DNA/s`; 
+        }
+        else if (key === 'RECORDER') { count = meta.akashicRecorderCount; statText = `Chance: ${Math.min(100, count * 15)}% to duplicate`; }
+
+        else if (key === 'STORAGE') { count = meta.storageCount; statText = `Cap: +${(count * 5000).toLocaleString()}`; }
+        else if (key === 'SUPPLY') { count = meta.supplyCount; statText = `Pop Cap: +${(count * 50)}`; }
+
+        return { count, cost, statText };
+    }
+
+    return (
+        <div className="animate-in fade-in slide-in-from-right-4 duration-300 pb-20 space-y-8">
+             <div className="flex justify-between items-end mb-4">
+                <div>
+                    <h3 className="text-2xl font-black text-green-500 uppercase tracking-widest mb-1">代谢工程 (Metabolism)</h3>
+                    <p className="text-gray-500 text-sm">Optimize the resource conversion loops.</p>
+                </div>
+            </div>
+            
+            <div className="space-y-6">
+                {groups.map((group) => (
+                    <div key={group.id} className={`rounded-xl border ${group.border} ${group.bg} overflow-hidden`}>
+                        {/* Group Header */}
+                        <div className="px-6 py-3 bg-black/20 border-b border-white/5 flex justify-between items-center">
+                            <div>
+                                <h4 className={`font-bold uppercase tracking-widest ${group.color}`}>{group.name}</h4>
+                                <div className="text-[10px] text-gray-400 font-mono tracking-wide">{group.sub}</div>
+                            </div>
+                        </div>
+
+                        {/* Facilities Rows */}
+                        <div className="p-4 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+                            {group.facilities.map((key) => {
+                                const config = METABOLISM_FACILITIES[key as keyof typeof METABOLISM_FACILITIES] as any;
+                                const { count, cost, statText } = getFacilityStatus(key);
+                                
+                                const resType = cost.resource;
+                                const currentRes = (globalState.resources as any)[resType];
+                                const canAfford = currentRes >= cost.cost;
+
+                                return (
+                                    <div key={key} className="bg-[#0a0a0a] border border-gray-800 p-4 rounded-lg flex flex-col justify-between hover:border-gray-600 transition-colors group relative">
+                                        <div>
+                                            <div className="flex justify-between items-start mb-2">
+                                                <h5 className="font-bold text-gray-200 text-sm">{config.NAME}</h5>
+                                                <div className="text-xl font-black text-gray-800 absolute top-2 right-4 pointer-events-none opacity-50 group-hover:text-gray-700 transition-colors">
+                                                    {count}
+                                                </div>
+                                            </div>
+                                            <p className="text-[10px] text-gray-500 h-10 leading-tight overflow-hidden text-ellipsis">{config.DESC}</p>
+                                            
+                                            {/* Dynamic Stats */}
+                                            {statText && (
+                                                <div className="bg-black/40 rounded p-1.5 mt-2 border border-white/5 text-[10px] font-mono text-gray-300">
+                                                    {statText}
+                                                </div>
+                                            )}
+                                        </div>
+
+                                        <button
+                                            onClick={() => DataManager.instance.upgradeMetabolism(key)}
+                                            disabled={!canAfford}
+                                            className={`mt-4 w-full py-2 rounded text-[10px] font-bold uppercase flex items-center justify-center gap-2 transition-all border ${
+                                                canAfford 
+                                                ? 'bg-gray-800 hover:bg-gray-700 text-white border-gray-600 hover:border-white/50 shadow-lg' 
+                                                : 'bg-black/50 text-gray-600 border-gray-800 cursor-not-allowed'
+                                            }`}
+                                        >
+                                            <span>购买 (Buy)</span>
+                                            <span className={`font-mono ${canAfford ? (resType === 'biomass' ? 'text-green-500' : resType === 'enzymes' ? 'text-orange-500' : 'text-blue-500') : 'text-gray-600'}`}>
+                                                {cost.cost.toLocaleString()} {resType === 'biomass' ? 'Bio' : resType === 'enzymes' ? 'Enz' : 'DNA'}
+                                            </span>
+                                        </button>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    </div>
+                ))}
+            </div>
         </div>
     );
   };

@@ -1,4 +1,5 @@
 
+
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { GameCanvas } from './components/GameCanvas';
 import { HUD } from './components/HUD';
@@ -132,10 +133,11 @@ const App: React.FC = () => {
               
               <div className="h-8 w-px bg-gray-800"></div>
 
-              <div className="flex gap-8">
-                  <ResourceItem label="生物质" value={globalState.resources.biomass} color="text-green-500" />
-                  <ResourceItem label="矿物质" value={globalState.resources.minerals} color="text-purple-400" />
+              <div className="flex gap-6">
+                  <ResourceItem label="Biomass" value={globalState.resources.biomass} color="text-green-500" />
+                  <ResourceItem label="Enzymes" value={globalState.resources.enzymes} color="text-orange-500" />
                   <ResourceItem label="DNA" value={globalState.resources.dna} color="text-blue-400" />
+                  <ResourceItem label="Minerals" value={globalState.resources.minerals} color="text-purple-400" />
               </div>
           </div>
 
