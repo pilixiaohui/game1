@@ -1,21 +1,26 @@
 
-
-
-
-
-
-
 import React, { useState } from 'react';
-import { GameSaveData, UnitType, HiveSection, Polarity } from '../types';
-import { UNIT_CONFIGS, METABOLISM_FACILITIES, BIO_PLUGINS, PLAYABLE_UNITS, MAX_RESOURCES_BASE } from '../constants';
+import { GameSaveData, UnitType, HiveSection, Polarity, GameStateSnapshot, RegionData } from '../types';
+import { UNIT_CONFIGS, METABOLISM_FACILITIES, BIO_PLUGINS, PLAYABLE_UNITS } from '../constants';
 import { DataManager } from '../game/DataManager';
+import { GameEngine } from '../game/GameEngine';
+import { GameCanvas } from './GameCanvas';
+import { WorldMapView } from './WorldMapView';
+import { HUD } from './HUD';
 
 interface HiveViewProps {
   globalState: GameSaveData;
   onUpgrade: (type: UnitType) => void;
   onConfigChange: (type: UnitType, value: number) => void;
   onDigest: () => void;
-  onClose: () => void;
+  
+  // Invasion Props
+  gameState: GameStateSnapshot;
+  activeRegion: RegionData | null;
+  mapRegions: RegionData[];
+  onEnterRegion: (region: RegionData) => void;
+  onEvacuate: () => void;
+  onEngineInit: (engine: GameEngine) => void;
 }
 
 const PolarityIcon = ({ type }: { type: Polarity }) => {
@@ -27,12 +32,60 @@ const PolarityIcon = ({ type }: { type: Polarity }) => {
     }
 }
 
-export const HiveView: React.FC<HiveViewProps> = ({ globalState, onUpgrade, onConfigChange, onDigest, onClose }) => {
-  const [activeSection, setActiveSection] = useState<HiveSection>(HiveSection.METABOLISM);
+export const HiveView: React.FC<HiveViewProps> = ({ 
+    globalState, onUpgrade, onConfigChange, onDigest,
+    gameState, activeRegion, mapRegions, onEnterRegion, onEvacuate, onEngineInit
+}) => {
+  const [activeSection, setActiveSection] = useState<HiveSection>(HiveSection.INVASION);
   
   // Grafting State
   const [graftingUnit, setGraftingUnit] = useState<UnitType>(UnitType.MELEE);
   const [selectedSlot, setSelectedSlot] = useState<number | null>(null);
+
+  const renderInvasion = () => {
+      return (
+          <div className="flex h-full w-full animate-in fade-in duration-300">
+              {/* SIDEBAR (World Map) */}
+              <div className="w-1/3 min-w-[300px] border-r border-gray-800 relative z-10 bg-[#0a0a0a]">
+                   <div className="absolute top-0 left-0 w-full p-4 bg-gradient-to-b from-black/80 to-transparent pointer-events-none z-10">
+                       <h2 className="text-gray-500 text-xs font-bold tracking-widest uppercase">全球行动 (Global Operations)</h2>
+                   </div>
+                   <WorldMapView 
+                        globalState={{...globalState, regions: mapRegions} as any} 
+                        onEnterRegion={onEnterRegion} 
+                        onOpenHive={() => {}} // No-op as we are already in hive
+                        activeRegionId={activeRegion?.id}
+                    />
+              </div>
+
+              {/* MAIN GAME VIEW */}
+              <div className="flex-1 relative bg-black">
+                    <GameCanvas 
+                        activeRegion={activeRegion}
+                        onEngineInit={onEngineInit} 
+                    />
+                    
+                    {activeRegion ? (
+                        <>
+                            <HUD gameState={gameState} onEvacuate={onEvacuate} />
+                            <div className="absolute top-4 left-1/2 -translate-x-1/2 pointer-events-none opacity-30">
+                                 <h1 className="text-4xl font-black text-white uppercase tracking-tighter">{activeRegion.name}</h1>
+                            </div>
+                        </>
+                    ) : (
+                        // Stockpile Overlay
+                        <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+                            <div className="bg-black/40 backdrop-blur-sm p-6 rounded-2xl border border-gray-800/50 flex flex-col items-center">
+                                <div className="text-orange-500 text-6xl mb-4 animate-pulse opacity-80">☣️</div>
+                                <h2 className="text-2xl font-black text-white uppercase tracking-widest mb-2">等待指令</h2>
+                                <p className="text-gray-400 text-xs tracking-wider uppercase">虫群兵力储备中... 选择冲突区域以投放</p>
+                            </div>
+                        </div>
+                    )}
+              </div>
+          </div>
+      );
+  };
 
   const renderEvolution = () => (
     <div className="flex flex-col items-center justify-center h-full text-center p-8 animate-in fade-in slide-in-from-right-4 duration-300">
@@ -184,7 +237,7 @@ export const HiveView: React.FC<HiveViewProps> = ({ globalState, onUpgrade, onCo
     }
 
     return (
-        <div className="animate-in fade-in slide-in-from-right-4 duration-300 pb-20 space-y-8">
+        <div className="animate-in fade-in slide-in-from-right-4 duration-300 pb-20 space-y-8 p-8 max-w-7xl mx-auto">
              <div className="flex justify-between items-end mb-4">
                 <div>
                     <h3 className="text-2xl font-black text-green-500 uppercase tracking-widest mb-1">代谢工程 (Metabolism)</h3>
@@ -271,7 +324,7 @@ export const HiveView: React.FC<HiveViewProps> = ({ globalState, onUpgrade, onCo
       const isOverload = currentLoad > maxLoad;
 
       return (
-        <div className="animate-in fade-in slide-in-from-right-4 duration-300 flex h-full gap-6 pb-20">
+        <div className="animate-in fade-in slide-in-from-right-4 duration-300 flex h-full gap-6 pb-20 p-8 max-w-7xl mx-auto">
             {/* LEFT: Unit Selector & Stats & Upgrade */}
             <div className="w-1/3 flex flex-col gap-6">
                 <div>
@@ -429,7 +482,7 @@ export const HiveView: React.FC<HiveViewProps> = ({ globalState, onUpgrade, onCo
     const queenStats = DataManager.instance.getQueenStats();
     
     return (
-      <div className="animate-in fade-in slide-in-from-right-4 duration-300 pb-20">
+      <div className="animate-in fade-in slide-in-from-right-4 duration-300 pb-20 p-8 max-w-7xl mx-auto">
         <div className="mb-6 flex justify-between items-end">
             <div>
                 <h3 className="text-2xl font-black text-orange-500 uppercase tracking-widest mb-1">孵化矩阵</h3>
@@ -555,31 +608,29 @@ export const HiveView: React.FC<HiveViewProps> = ({ globalState, onUpgrade, onCo
   };
 
   return (
-    <div className="flex h-full gap-8">
-        {/* Navigation */}
-        <div className="w-48 flex flex-col gap-2 shrink-0">
-             <button onClick={() => setActiveSection(HiveSection.BIRTHING)} className={`text-left px-4 py-3 rounded text-sm font-bold uppercase tracking-wider transition-colors ${activeSection === HiveSection.BIRTHING ? 'bg-orange-600 text-white' : 'hover:bg-gray-800 text-gray-500'}`}>
+    <div className="flex h-full gap-0">
+        {/* Navigation Sidebar */}
+        <div className="w-48 flex flex-col gap-2 shrink-0 border-r border-gray-800 bg-[#050505] p-2 pt-4">
+             <button onClick={() => setActiveSection(HiveSection.INVASION)} className={`text-left px-4 py-3 rounded text-sm font-bold uppercase tracking-wider transition-colors border-l-4 ${activeSection === HiveSection.INVASION ? 'bg-red-900/30 text-white border-red-500' : 'border-transparent hover:bg-gray-900 text-gray-500'}`}>
+                 0. 入侵 (Invasion)
+             </button>
+             <button onClick={() => setActiveSection(HiveSection.BIRTHING)} className={`text-left px-4 py-3 rounded text-sm font-bold uppercase tracking-wider transition-colors border-l-4 ${activeSection === HiveSection.BIRTHING ? 'bg-orange-900/30 text-white border-orange-500' : 'border-transparent hover:bg-gray-900 text-gray-500'}`}>
                  1. 孵化 (Birthing)
              </button>
-             <button onClick={() => setActiveSection(HiveSection.METABOLISM)} className={`text-left px-4 py-3 rounded text-sm font-bold uppercase tracking-wider transition-colors ${activeSection === HiveSection.METABOLISM ? 'bg-green-600 text-white' : 'hover:bg-gray-800 text-gray-500'}`}>
+             <button onClick={() => setActiveSection(HiveSection.METABOLISM)} className={`text-left px-4 py-3 rounded text-sm font-bold uppercase tracking-wider transition-colors border-l-4 ${activeSection === HiveSection.METABOLISM ? 'bg-green-900/30 text-white border-green-500' : 'border-transparent hover:bg-gray-900 text-gray-500'}`}>
                  2. 代谢 (Metabolism)
              </button>
-             <button onClick={() => setActiveSection(HiveSection.GRAFTING)} className={`text-left px-4 py-3 rounded text-sm font-bold uppercase tracking-wider transition-colors ${activeSection === HiveSection.GRAFTING ? 'bg-purple-600 text-white' : 'hover:bg-gray-800 text-gray-500'}`}>
+             <button onClick={() => setActiveSection(HiveSection.GRAFTING)} className={`text-left px-4 py-3 rounded text-sm font-bold uppercase tracking-wider transition-colors border-l-4 ${activeSection === HiveSection.GRAFTING ? 'bg-purple-900/30 text-white border-purple-500' : 'border-transparent hover:bg-gray-900 text-gray-500'}`}>
                  3. 嫁接 (Grafting)
              </button>
-             <button onClick={() => setActiveSection(HiveSection.EVOLUTION)} className={`text-left px-4 py-3 rounded text-sm font-bold uppercase tracking-wider transition-colors ${activeSection === HiveSection.EVOLUTION ? 'bg-yellow-600 text-white' : 'hover:bg-gray-800 text-gray-500'}`}>
+             <button onClick={() => setActiveSection(HiveSection.EVOLUTION)} className={`text-left px-4 py-3 rounded text-sm font-bold uppercase tracking-wider transition-colors border-l-4 ${activeSection === HiveSection.EVOLUTION ? 'bg-yellow-900/30 text-white border-yellow-500' : 'border-transparent hover:bg-gray-900 text-gray-500'}`}>
                  4. 进化 (Evolution)
              </button>
-             
-             <div className="mt-auto">
-                 <button onClick={onClose} className="w-full py-3 border border-gray-700 text-gray-500 uppercase text-xs font-bold hover:bg-gray-800 hover:text-white transition-colors">
-                     Back to Surface
-                 </button>
-             </div>
         </div>
 
-        {/* Content */}
-        <div className="flex-1 h-full overflow-y-auto pr-4">
+        {/* Main Content Area */}
+        <div className={`flex-1 h-full relative ${activeSection === HiveSection.INVASION ? 'overflow-hidden' : 'overflow-y-auto'}`}>
+             {activeSection === HiveSection.INVASION && renderInvasion()}
              {activeSection === HiveSection.BIRTHING && renderBirthing()}
              {activeSection === HiveSection.METABOLISM && renderMetabolism()}
              {activeSection === HiveSection.GRAFTING && renderGrafting()}

@@ -24,6 +24,7 @@ export enum UnitType {
 }
 
 export enum HiveSection {
+  INVASION = 'INVASION', // New Tab
   EVOLUTION = 'EVOLUTION',
   GRAFTING = 'GRAFTING',
   SEQUENCE = 'SEQUENCE',

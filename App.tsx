@@ -1,12 +1,9 @@
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { GameCanvas } from './components/GameCanvas';
-import { HUD } from './components/HUD';
-import { WorldMapView } from './components/WorldMapView';
 import { HiveView } from './components/HiveView';
 import { GameEngine } from './game/GameEngine';
 import { DataManager } from './game/DataManager';
-import { GameStateSnapshot, RoguelikeCard, RegionData, UnitType, GameSaveData } from './types';
+import { GameStateSnapshot, RegionData, UnitType, GameSaveData } from './types';
 import { INITIAL_REGIONS_CONFIG } from './constants';
 
 const App: React.FC = () => {
@@ -20,7 +17,6 @@ const App: React.FC = () => {
 
   // --- UI State ---
   const [activeRegion, setActiveRegion] = useState<RegionData | null>(null);
-  const [isHiveOpen, setIsHiveOpen] = useState(false);
 
   // --- Battle State (HUD) ---
   const [gameState, setGameState] = useState<GameStateSnapshot>({
@@ -38,15 +34,12 @@ const App: React.FC = () => {
       };
 
       const dm = DataManager.instance;
-      // Resource & Production
       dm.events.on('RESOURCE_CHANGED', handleDataChange);
       dm.events.on('STOCKPILE_CHANGED', handleDataChange);
       dm.events.on('PRODUCTION_CHANGED', handleDataChange);
-      // Units & Progression
       dm.events.on('UNIT_UPGRADED', handleDataChange);
       dm.events.on('REGION_PROGRESS', handleDataChange);
       dm.events.on('REGION_UNLOCKED', handleDataChange);
-      // Grafting / Plugins (CRITICAL FOR SYNC)
       dm.events.on('PLUGIN_EQUIPPED', handleDataChange);
       dm.events.on('PLUGIN_UPGRADED', handleDataChange);
 
@@ -162,77 +155,25 @@ const App: React.FC = () => {
                         <span className="text-xs text-gray-600 ml-1">/ {DataManager.instance.getMaxPopulationCap()}</span>
                    </div>
                </div>
-               
-               <button 
-                  onClick={() => setIsHiveOpen(!isHiveOpen)}
-                  className={`px-4 py-2 rounded text-xs font-bold uppercase tracking-widest transition-colors border shadow-lg ${
-                      isHiveOpen 
-                      ? 'bg-red-900/50 text-red-200 border-red-500/50 hover:bg-red-800' 
-                      : 'bg-gray-800 text-gray-300 border-gray-700 hover:border-white hover:text-white'
-                  }`}
-               >
-                  {isHiveOpen ? 'Close Hive' : 'Manage Hive'}
-               </button>
           </div>
       </div>
 
-      {/* CONTENT AREA WRAPPER */}
-      <div className="flex-1 flex overflow-hidden relative">
-          {/* HIVE VIEW OVERLAY - MOVED HERE TO COVER ALL CONTENT */}
-          {isHiveOpen && (
-              <div className="absolute inset-0 z-50 bg-[#0b0b0b]/98 backdrop-blur-md overflow-hidden flex flex-col">
-                  <div className="flex-1 overflow-y-auto">
-                    <div className="p-8 max-w-7xl mx-auto h-full">
-                        <HiveView 
-                            globalState={globalState}
-                            onUpgrade={handleUpgradeUnit}
-                            onConfigChange={handleProductionConfigChange}
-                            onDigest={handleDigest}
-                            onClose={() => setIsHiveOpen(false)}
-                        />
-                    </div>
-                  </div>
-              </div>
-          )}
-
-          {/* SIDEBAR (World Map) */}
-          <div className="w-1/3 min-w-[300px] border-r border-gray-800 relative z-10 bg-[#0a0a0a]">
-               <div className="absolute top-0 left-0 w-full p-4 bg-gradient-to-b from-black/80 to-transparent pointer-events-none z-10">
-                   <h2 className="text-gray-500 text-xs font-bold tracking-widest uppercase">全球行动</h2>
-               </div>
-               <WorldMapView 
-                    globalState={{...globalState, regions: mapRegions} as any} 
-                    onEnterRegion={handleEnterRegion} 
-                    onOpenHive={() => setIsHiveOpen(true)}
-                    activeRegionId={activeRegion?.id}
-                />
-          </div>
-
-          {/* MAIN GAME VIEW */}
-          <div className="flex-1 relative bg-black">
-                <GameCanvas 
-                    activeRegion={activeRegion}
-                    onEngineInit={handleEngineInit} 
-                />
-                
-                {activeRegion ? (
-                    <>
-                        <HUD gameState={gameState} onEvacuate={handleEvacuate} />
-                        <div className="absolute top-4 left-1/2 -translate-x-1/2 pointer-events-none opacity-30">
-                             <h1 className="text-4xl font-black text-white uppercase tracking-tighter">{activeRegion.name}</h1>
-                        </div>
-                    </>
-                ) : (
-                    // Stockpile Overlay
-                    <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
-                        <div className="bg-black/40 backdrop-blur-sm p-6 rounded-2xl border border-gray-800/50 flex flex-col items-center">
-                            <div className="text-orange-500 text-6xl mb-4 animate-pulse opacity-80">☣️</div>
-                            <h2 className="text-2xl font-black text-white uppercase tracking-widest mb-2">等待指令</h2>
-                            <p className="text-gray-400 text-xs tracking-wider uppercase">虫群兵力储备中... 选择冲突区域以投放</p>
-                        </div>
-                    </div>
-                )}
-          </div>
+      {/* MAIN VIEW (The Hive Dashboard) */}
+      <div className="flex-1 overflow-hidden relative">
+          <HiveView 
+              globalState={globalState}
+              onUpgrade={handleUpgradeUnit}
+              onConfigChange={handleProductionConfigChange}
+              onDigest={handleDigest}
+              
+              // Invasion Tab Props
+              gameState={gameState}
+              activeRegion={activeRegion}
+              mapRegions={mapRegions}
+              onEnterRegion={handleEnterRegion}
+              onEvacuate={handleEvacuate}
+              onEngineInit={handleEngineInit}
+          />
       </div>
     </div>
   );
