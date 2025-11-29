@@ -1,5 +1,3 @@
-
-
 import { Application, Container, Graphics, TilingSprite, Text, TextStyle } from 'pixi.js';
 import { Faction, GameModifiers, UnitType, GameStateSnapshot, RoguelikeCard, ElementType, StatusType, StatusEffect } from '../types';
 import { UNIT_CONFIGS, LANE_Y, LANE_HEIGHT, DECAY_TIME, MILESTONE_DISTANCE, COLLISION_BUFFER, MAX_SCREEN_UNITS, ELEMENT_COLORS, INITIAL_REGIONS_CONFIG, STATUS_CONFIG, STRONGHOLDS, OBSTACLES } from '../constants';
@@ -456,7 +454,7 @@ export class GameEngine {
   private isStrongholdCleared(strongholdX: number): boolean {
       if (!this.unitPool) return true;
       const range = 300;
-      // Filter for alive human units near the stronghold x
+      // Filter for alive human human units near the stronghold x
       const defenders = this.unitPool.getActiveUnits().filter(u => 
           u.faction === Faction.HUMAN && 
           !u.isDead && 
@@ -719,6 +717,7 @@ export class GameEngine {
      if (u.flashTimer > 0) u.flashTimer -= dt;
      this.updateUnitVisuals(u);
 
+     // --- 1. 漫步逻辑 (Stockpile Mode) - 保持不变 ---
      if (this.isStockpileMode && u.faction === Faction.ZERG) {
          u.state = 'WANDER'; u.target = null;
          u.wanderTimer -= dt;
@@ -732,33 +731,79 @@ export class GameEngine {
      }
 
      // Micro-Stun Check (Shock)
-     if (u.statuses['SHOCKED'] && Math.random() < 0.05) {
-         // Randomly interrupt movement frame
-         return; 
-     }
+     if (u.statuses['SHOCKED'] && Math.random() < 0.05) return; 
 
-     let nearestDist = Infinity; let nearestUnit: Unit | null = null;
+     // --- 2. 改进的索敌逻辑 (Aggro System) ---
+     let nearestDist = Infinity; 
+     let nearestUnit: Unit | null = null;
+     
+     // 定义索敌范围：人类视野通常较远，虫群则需要感知周围
+     // 增加此范围可以让单位去攻击侧翼或稍微身后的敌人
+     const AGGRO_RANGE = 400; 
+
      for (const enemy of enemies) {
-        const dx = enemy.x - u.x; const forwardDir = u.faction === Faction.ZERG ? 1 : -1;
-        if (Math.sign(dx) !== forwardDir && Math.abs(dx) > 30) continue;
-        const dist = Math.sqrt((enemy.x - u.x)**2 + (enemy.y - u.y)**2); 
-        if (dist < nearestDist) { nearestDist = dist; nearestUnit = enemy; }
-     }
-     u.target = nearestUnit;
-     if (u.faction === Faction.ZERG) { u.state = 'MOVE'; if (u.target && (nearestDist <= u.radius + u.target.radius + COLLISION_BUFFER || nearestDist <= u.range)) u.state = 'ATTACK'; } 
-     else { u.state = 'IDLE'; if (u.target && nearestDist <= u.range) u.state = 'ATTACK'; }
+        // 简单的圆形距离检测，不再限制 X 轴方向
+        const distSq = (enemy.x - u.x)**2 + (enemy.y - u.y)**2;
+        
+        if (distSq > AGGRO_RANGE * AGGRO_RANGE) continue; // 超出警戒范围
 
+        // 优先攻击：距离更近的敌人
+        // 可选优化：优先攻击正在攻击自己的敌人（仇恨系统），目前先用纯距离
+        if (distSq < nearestDist) { 
+            nearestDist = distSq; 
+            nearestUnit = enemy; 
+        }
+     }
+     
+     // 将距离平方开根号以便后续使用
+     nearestDist = Math.sqrt(nearestDist);
+     u.target = nearestUnit;
+
+     // --- 3. 状态机切换 ---
+     if (u.faction === Faction.ZERG) { 
+         u.state = 'MOVE'; 
+         // 如果有目标，且在攻击范围内（半径之和 + 碰撞缓冲 或 射程）
+         if (u.target && (nearestDist <= u.radius + u.target.radius + COLLISION_BUFFER || nearestDist <= u.range)) {
+            u.state = 'ATTACK'; 
+         }
+     } else { 
+         // 人类逻辑：原地防守
+         u.state = 'IDLE'; 
+         if (u.target && nearestDist <= u.range) u.state = 'ATTACK'; 
+     }
+
+     // --- 4. 移动逻辑 (Movement Physics) ---
      if (u.state === 'MOVE' || u.state === 'IDLE') {
-        const direction = u.faction === Faction.ZERG ? 1 : -1; 
         let dxMove = 0; 
         let dyMove = 0;
         
-        if (u.faction === Faction.ZERG && u.state === 'MOVE') dxMove += u.speed * dt * direction;
+        // A. 基础移动 (追击或巡逻)
+        if (u.faction === Faction.ZERG && u.state === 'MOVE') {
+            if (u.target) {
+                // [核心修改]：如果有目标，向目标方向移动！
+                // 计算归一化向量
+                const dist = nearestDist; // 上面算过的
+                if (dist > 0) {
+                    const dirX = (u.target.x - u.x) / dist;
+                    const dirY = (u.target.y - u.y) / dist;
+                    
+                    dxMove += dirX * u.speed * dt;
+                    dyMove += dirY * u.speed * dt;
+                }
+            } else {
+                // [核心修改]：没有目标，默认向右巡逻，但是会稍微回归中心轴 (LANE_Y)
+                // 这样避免虫子因为之前的避障跑到屏幕最边缘回不来
+                dxMove += u.speed * dt * 1; // 向右
+                
+                // 缓慢回归中心 Y 轴的趋势 (可选，让队形更紧凑)
+                const distToCenter = LANE_Y - u.y;
+                dyMove += distToCenter * 0.5 * dt; 
+            }
+        }
 
-        // --- NEW: BOIDS SEPARATION (Fluid Physics) ---
+        // B. 流体挤压 (Boids Separation) - 保持之前的代码
         for (const friend of friends) {
             if (friend === u) continue;
-            // Simple distance check optimization
             if (Math.abs(friend.x - u.x) > 30) continue; 
 
             const distSq = (u.x - friend.x)**2 + (u.y - friend.y)**2;
@@ -767,21 +812,19 @@ export class GameEngine {
             if (distSq < repelRadius * repelRadius && distSq > 0.001) {
                 const dist = Math.sqrt(distSq);
                 const force = (repelRadius - dist) / repelRadius; 
-                
-                // Stronger Y-push for lateral expansion (fluidity)
+                // Y轴推力更强，形成侧向分流
                 const pushX = (u.x - friend.x) / dist * force * 100 * dt;
                 const pushY = (u.y - friend.y) / dist * force * 300 * dt; 
-
                 dxMove += pushX;
                 dyMove += pushY;
             }
         }
-        // ---------------------------------------------
 
+        // 应用位移
         u.x += dxMove; 
         u.y += dyMove;
 
-        // --- NEW: OBSTACLE COLLISION ---
+        // C. 地形障碍物 (Obstacles) - 保持之前的代码
         for (const obs of OBSTACLES) {
             // Note: Obstacles are defined relative to LANE_Y in constants
             const obsY = LANE_Y + obs.y;
@@ -804,16 +847,32 @@ export class GameEngine {
                 u.y += (ny > 0 ? 1 : -1) * 200 * dt; 
             }
         }
-        // -------------------------------
 
-        // Boundaries
+        // 边界限制
         if (u.y < LANE_Y - LANE_HEIGHT/2) u.y = LANE_Y - LANE_HEIGHT/2; 
         if (u.y > LANE_Y + LANE_HEIGHT/2) u.y = LANE_Y + LANE_HEIGHT/2;
         
-        // Bobbing animation
-        if (u.view && Math.abs(dxMove) > 0.5) u.view.y = u.y + Math.sin(u.x * 0.15) * 2; else if (u.view) u.view.y = u.y;
+        // 视图更新
+        if (u.view && Math.abs(dxMove) > 0.5) {
+             u.view.y = u.y + Math.sin(u.x * 0.15) * 2; 
+             // 根据移动方向翻转贴图 (如果向左追击)
+             if (dxMove < 0) u.view.scale.x = -1;
+             else u.view.scale.x = 1;
+        } else if (u.view) {
+             u.view.y = u.y;
+        }
+
      } else if (u.state === 'ATTACK') {
+        // --- 5. 攻击逻辑 ---
         u.attackCooldown -= dt; 
+        
+        // 攻击时稍微转向目标 (视觉优化)
+        if (u.target && u.view) {
+             const dx = u.target.x - u.x;
+             if (dx < 0) u.view.scale.x = -1;
+             else u.view.scale.x = 1;
+        }
+
         if (u.attackCooldown <= 0 && u.target) { 
             u.attackCooldown = u.maxAttackCooldown; 
             
@@ -824,8 +883,11 @@ export class GameEngine {
         }
         if (u.view) u.view.y = u.y;
      }
+     
+     // 统一更新视图位置
      if (u.view) {
-        u.view.position.x = u.x; u.view.zIndex = u.y;
+        u.view.position.x = u.x;
+        u.view.zIndex = u.y;
         if (u.hpBar) {
             u.hpBar.clear();
             if (u.hp < u.maxHp) {
@@ -933,10 +995,16 @@ export class GameEngine {
       if (!this.app || this.isDestroyed) return;
       let t = this.textPool.pop();
       if (!t) {
-          t = new Text(text, new TextStyle({
-              fontFamily: 'Courier New', fontSize, fontWeight: 'bold', fill: color,
-              stroke: 0x000000, strokeThickness: 2
-          }));
+          t = new Text({
+              text,
+              style: {
+                  fontFamily: 'Courier New', 
+                  fontSize, 
+                  fontWeight: 'bold', 
+                  fill: color,
+                  stroke: { color: 0x000000, width: 2 }
+              }
+          });
       } else {
           t.text = text;
           t.style.fill = color;

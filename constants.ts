@@ -66,7 +66,7 @@ export const METABOLISM_FACILITIES = {
         DESC: "最基础的吸收单元。每100个使产出+25%。",
         BASE_COST: 15,
         GROWTH: 1.07,
-        BASE_RATE: 1.0,
+        BASE_RATE: 10000.0,
         COST_RESOURCE: 'biomass'
     },
     TAPROOT: {
