@@ -245,6 +245,9 @@ export interface GameStateSnapshot {
     stockpileTotal: number;
     populationCap: number; 
     
+    // Detailed Breakdown for HUD
+    activeZergCounts: Record<string, number>;
+
     isPaused: boolean;
 }
 

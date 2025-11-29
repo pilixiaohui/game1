@@ -20,7 +20,7 @@ export const RECYCLE_REFUND_RATE = 0.8;
 
 // --- NEW: PER-UNIT SCREEN CAPS (Local Battle Limits) ---
 export const UNIT_SCREEN_CAPS: Record<UnitType, number> = {
-    [UnitType.MELEE]: 50,      // Swarm
+    [UnitType.MELEE]: 200,      // Swarm
     [UnitType.RANGED]: 30,     // Support
     [UnitType.PYROVORE]: 15,   // Artillery
     [UnitType.CRYOLISK]: 15,   // Elite

@@ -1,7 +1,4 @@
 
-
-
-
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { GameCanvas } from './components/GameCanvas';
 import { HUD } from './components/HUD';
@@ -28,7 +25,8 @@ const App: React.FC = () => {
   // --- Battle State (HUD) ---
   const [gameState, setGameState] = useState<GameStateSnapshot>({
     resources: 0, distance: 0, unitCountZerg: 0, unitCountHuman: 0, isPaused: false,
-    stockpileMelee: 0, stockpileRanged: 0, stockpileTotal: 0, populationCap: 0
+    stockpileMelee: 0, stockpileRanged: 0, stockpileTotal: 0, populationCap: 0,
+    activeZergCounts: {}
   });
 
   // Subscribe to DataManager events

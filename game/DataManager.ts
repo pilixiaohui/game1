@@ -370,6 +370,12 @@ export class DataManager {
         }
         return false;
     }
+
+    // NEW: Recycle unit back to stockpile without cost (Tactical Reposition)
+    public addToStockpile(type: UnitType, amount: number) {
+        this.state.hive.unitStockpile[type] = (this.state.hive.unitStockpile[type] || 0) + amount;
+        this.events.emit('STOCKPILE_CHANGED', this.state.hive.unitStockpile);
+    }
     
     public prestige() {
         const sacrifice = this.state.resources.biomass;

@@ -1,3 +1,4 @@
+
 import { Application, Container, Graphics, TilingSprite, Text, TextStyle } from 'pixi.js';
 import { Faction, GameModifiers, UnitType, GameStateSnapshot, RoguelikeCard, ElementType, StatusType, StatusEffect } from '../types';
 import { UNIT_CONFIGS, LANE_Y, LANE_HEIGHT, DECAY_TIME, MILESTONE_DISTANCE, COLLISION_BUFFER, UNIT_SCREEN_CAPS, ELEMENT_COLORS, INITIAL_REGIONS_CONFIG, STATUS_CONFIG, STRONGHOLDS, OBSTACLES } from '../constants';
@@ -98,7 +99,7 @@ class UnitPool {
     
     // Reset AI props
     unit.engagedCount = 0;
-    unit.speedVar = 0.9 + Math.random() * 0.2;
+    unit.speedVar = 0.85 + Math.random() * 0.3; // More variance
     unit.waveOffset = Math.random() * 100;
 
     let stats;
@@ -374,6 +375,12 @@ export class GameEngine {
       this.activeParticles = [];
   }
 
+  private recycleUnitToStockpile(u: Unit) {
+      if (!this.unitPool) return;
+      this.unitPool.recycle(u);
+      DataManager.instance.addToStockpile(u.type, 1);
+  }
+
   private update(delta: number) {
     if (this.isPaused || !this.app || this.isDestroyed) return;
     const dt = delta / 60; 
@@ -387,7 +394,7 @@ export class GameEngine {
     }
 
     const allUnits = this.unitPool!.getActiveUnits();
-    const livingUnits = allUnits.filter(u => !u.isDead);
+    const livingUnits = allUnits.filter(u => !u.active ? false : !u.isDead);
     
     // --- NEW: Reset Engagement Counters per frame ---
     // This allows us to re-evaluate who is attacking whom every frame, preventing "slot sticking" issues
@@ -399,46 +406,55 @@ export class GameEngine {
     zergUnits.sort((a, b) => a.x - b.x); 
 
     if (!this.isStockpileMode) {
-        // 1. Calculate Frontline (Existing Logic)
-        let frontX = 0;
-        if (zergUnits.length > 0) {
-            const leaders = zergUnits.slice(-3); 
-            frontX = leaders.reduce((acc, u) => acc + u.x, 0) / leaders.length;
+        // --- COMBAT HOTSPOT CAMERA LOGIC ---
+        
+        let targetCamX = this.cameraX;
+        
+        // A. Priority: Frontline Enemy (Anchor)
+        const visibleEnemies = humanUnits.filter(e => e.x > this.cameraX);
+        
+        if (visibleEnemies.length > 0) {
+            visibleEnemies.sort((a, b) => a.x - b.x);
+            const enemyFrontX = visibleEnemies[0].x;
+            // Target: First enemy at 70% of screen width (right side)
+            targetCamX = enemyFrontX - this.app.screen.width * 0.7;
         } else {
-            frontX = this.cameraX + 200; 
+            // B. No Enemies: Follow Swarm Centroid
+            if (zergUnits.length > 0) {
+                const totalX = zergUnits.reduce((sum, u) => sum + u.x, 0);
+                const avgX = totalX / zergUnits.length;
+                // Target: Swarm center at 40% of screen width (center-left)
+                targetCamX = avgX - this.app.screen.width * 0.4;
+            } else {
+                // No units? Stay put or drift slowly.
+                targetCamX = this.cameraX;
+            }
         }
 
-        // 2. --- NEW: SIEGE CAMERA LOGIC ---
+        // C. Stronghold Locking
         const nextStrongholdX = STRONGHOLDS[this.currentStrongholdIndex];
-        let targetCamX = frontX - this.app.screen.width * 0.6; // Default follow
-        
-        // If there is a stronghold ahead
         if (nextStrongholdX !== undefined) {
-             const lockTriggerX = nextStrongholdX - 100;
-             const lockCamX = nextStrongholdX - this.app.screen.width * 0.8; // Position camera to show the defense line
+             const lockCamX = nextStrongholdX - this.app.screen.width * 0.8;
              
-             // Check if we reached the stronghold and if it is still defended
-             if (frontX >= lockTriggerX && !this.isStrongholdCleared(nextStrongholdX)) {
+             // If target goes past lock line AND stronghold not cleared
+             if (targetCamX > lockCamX && !this.isStrongholdCleared(nextStrongholdX)) {
+                 targetCamX = lockCamX;
                  this.cameraLocked = true;
-                 targetCamX = lockCamX; // Override target
              } else {
-                 // Stronghold cleared or not reached
-                 if (this.cameraLocked) {
-                     this.cameraLocked = false; // Release lock
-                     this.currentStrongholdIndex++; // Advance to next stronghold
+                 if (this.cameraLocked && this.isStrongholdCleared(nextStrongholdX)) {
+                     this.cameraLocked = false;
+                     this.currentStrongholdIndex++;
                  }
              }
         }
-        // ---------------------------------
 
-        // 3. Smooth Camera Movement
-        const goalX = Math.max(0, targetCamX);
-        const camDiff = goalX - this.cameraX;
-        // Snap harder if locked to emphasize the "stop", smooth otherwise
-        const lerpFactor = this.cameraLocked ? 0.1 : (camDiff > 0 ? 0.05 : 0.02);
+        // D. Smooth Move
+        const finalGoalX = Math.max(0, targetCamX);
+        const camDiff = finalGoalX - this.cameraX;
+        const speedFactor = Math.abs(camDiff) > 100 ? 0.05 : 0.02; // Dynamic damping
         
-        this.cameraX += camDiff * lerpFactor;
-        
+        this.cameraX += camDiff * speedFactor;
+
         // Update Containers
         this.world.position.x = -this.cameraX; 
         if (this.bgLayer) this.bgLayer.tilePosition.x = -this.cameraX * 0.1;
@@ -458,14 +474,18 @@ export class GameEngine {
         }
     }
 
-    allUnits.forEach(u => {
-      if (u.isDead) this.processCorpse(u, dt);
-      else {
-          const enemies = u.faction === Faction.ZERG ? humanUnits : zergUnits;
-          const friends = u.faction === Faction.ZERG ? zergUnits : humanUnits;
-          this.processUnit(u, dt, enemies, friends);
-      }
-    });
+    // Iterate living units. NOTE: processUnit might remove a unit if it is culled for overlaps.
+    for (const u of allUnits) {
+        if (!u.active) continue; // Check active again in case recycled in loop
+        if (u.isDead) {
+            this.processCorpse(u, dt);
+        } else {
+            const enemies = u.faction === Faction.ZERG ? humanUnits : zergUnits;
+            const friends = u.faction === Faction.ZERG ? zergUnits : humanUnits;
+            this.processUnit(u, dt, enemies, friends);
+        }
+    }
+    
     this.unitLayer.children.sort((a, b) => a.zIndex - b.zIndex);
 
     if (!this.isStockpileMode && this.cameraX - this.lastProgressUpdateX > 100) {
@@ -473,8 +493,16 @@ export class GameEngine {
         DataManager.instance.updateRegionProgress(this.activeRegionId, deltaMeters * 0.05);
         this.lastProgressUpdateX = this.cameraX;
     }
+
+    // E. Culling (Relaxed for off-screen combat simulation)
     if (this.unitPool && !this.isStockpileMode) {
-        allUnits.forEach(u => { if (u.x < this.cameraX - 200) this.unitPool!.recycle(u); });
+        allUnits.forEach(u => { 
+            // Only recycle units far behind the camera (left side)
+            // Units running ahead (right side) are kept to fight off-screen
+            if (u.active && u.x < this.cameraX - 500) {
+                this.unitPool!.recycle(u); 
+            }
+        });
     }
   }
 
@@ -666,14 +694,15 @@ export class GameEngine {
     const stockpile = DataManager.instance.state.hive.unitStockpile;
     const spawnX = this.cameraX - 100 - (Math.random() * 50);
 
-    const availableTypes = Object.values(UnitType).filter(t => (stockpile[t] || 0) > 0 && t !== UnitType.QUEEN);
+    const availableTypes = Object.values(UnitType).filter(t => (stockpile[t] || 0) > 0);
     
     if (availableTypes.length === 0) return;
 
     // Filter by Per-Unit Screen Caps
     const spawnableTypes = availableTypes.filter(t => {
         const currentCount = activeZerg.filter(u => u.type === t).length;
-        return currentCount < UNIT_SCREEN_CAPS[t];
+        const cap = UNIT_SCREEN_CAPS[t] || 5;
+        return currentCount < cap;
     });
 
     if (spawnableTypes.length === 0) return;
@@ -706,7 +735,7 @@ export class GameEngine {
   }
 
   private updateStockpileVisualization(dt: number) {
-      // iterate through all Zerg unit types in stockpile
+      // Realistic visualization: Iterate through all Zerg unit types and match screen count to stockpile count
       const stockpile = DataManager.instance.state.hive.unitStockpile;
       const activeVisuals = this.unitPool!.getActiveUnits().filter(u => u.faction === Faction.ZERG);
       
@@ -715,7 +744,8 @@ export class GameEngine {
           if (type.startsWith('HUMAN')) return;
           
           const storedCount = stockpile[type] || 0;
-          const visualCap = UNIT_SCREEN_CAPS[type];
+          const visualCap = UNIT_SCREEN_CAPS[type] || 10;
+          // Show up to the screen cap
           const targetVisualCount = Math.min(storedCount, visualCap);
           
           const currentVisuals = activeVisuals.filter(u => u.type === type);
@@ -762,7 +792,8 @@ export class GameEngine {
              
              // Check Enemy Cap
              const currentEnemyCount = this.unitPool.getActiveUnits().filter(u => u.type === selectedType && !u.isDead).length;
-             if (currentEnemyCount < UNIT_SCREEN_CAPS[selectedType]) {
+             const cap = UNIT_SCREEN_CAPS[selectedType] || 10;
+             if (currentEnemyCount < cap) {
                  this.unitPool!.spawn(Faction.HUMAN, selectedType, spawnX, this.modifiers);
              }
         }
@@ -793,14 +824,18 @@ export class GameEngine {
      // Micro-Stun Check (Shock)
      if (u.statuses['SHOCKED'] && Math.random() < 0.05) return; 
 
-     // --- 2. Advanced Swarm AI: Engagement Slots & Sticky Targeting ---
+     // --- 2. Advanced Swarm AI: Targeting ---
      
      const AGGRO_RANGE = 400; 
-     const getCapacity = (target: Unit) => Math.max(3, Math.floor((target.radius * 3) / 10));
+     // Capacity: Circumference / UnitWidth (~2.5 factor)
+     const getCapacity = (target: Unit) => Math.max(3, Math.floor((target.radius * 2.5) / 10));
+
+     // Ranged units don't occupy slots and don't care about slots
+     const isRanged = u.range > 60; 
 
      let shouldSearch = true;
 
-     // A. Check if current target is still valid and if we should keep it
+     // A. Check if current target is still valid
      if (u.target) {
          if (u.target.isDead) {
              u.target = null;
@@ -809,31 +844,33 @@ export class GameEngine {
              if (distSq > AGGRO_RANGE * AGGRO_RANGE) {
                  u.target = null;
              } else {
-                 // Target is alive and in range.
-                 // CRITICAL FIX: If we are already ATTACKING (state === ATTACK), 
-                 // we maintain the lock regardless of capacity. We are "in the slot".
-                 const capacity = u.range < 50 ? getCapacity(u.target) : 20;
-                 
-                 if (u.state === 'ATTACK') {
-                     // We are engaged. Maintain lock.
-                     u.target.engagedCount++;
-                     shouldSearch = false; 
+                 if (isRanged) {
+                     // Ranged always keeps target if in range, doesn't increment slot
+                     shouldSearch = false;
                  } else {
-                     // We are running towards it. Is there still room?
-                     // Or did someone else steal the slot while we were running?
-                     if (u.target.engagedCount < capacity) {
+                     // Melee Logic
+                     const capacity = getCapacity(u.target);
+                     const dist = Math.sqrt(distSq);
+                     const isEngaged = dist <= u.range * 1.2;
+
+                     if (isEngaged) {
                          u.target.engagedCount++;
                          shouldSearch = false;
                      } else {
-                         // It's full. Abandon ship and find a new target.
-                         u.target = null;
+                         if (u.target.engagedCount < capacity) {
+                             u.target.engagedCount++;
+                             shouldSearch = false;
+                         } else {
+                             u.target = null; 
+                             shouldSearch = true; 
+                         }
                      }
                  }
              }
          }
      }
 
-     // B. Search for new target (if needed)
+     // B. Search for new target
      if (shouldSearch) {
         let bestTarget: Unit | null = null;
         let minDist = Infinity;
@@ -842,11 +879,11 @@ export class GameEngine {
             const distSq = (enemy.x - u.x)**2 + (enemy.y - u.y)**2;
             if (distSq > AGGRO_RANGE * AGGRO_RANGE) continue;
 
-            // Slot Logic: Check if target is full
-            const isMelee = u.range < 50; 
-            const capacity = isMelee ? getCapacity(enemy) : 20; 
-
-            if (enemy.engagedCount >= capacity) continue; // Skip if full
+            // Only check capacity for Melee units
+            if (!isRanged) {
+                const capacity = getCapacity(enemy);
+                if (enemy.engagedCount >= capacity) continue; 
+            }
 
             if (distSq < minDist) { 
                 minDist = distSq; 
@@ -855,141 +892,148 @@ export class GameEngine {
         }
         
         u.target = bestTarget;
-        if (u.target) {
+        if (u.target && !isRanged) {
             u.target.engagedCount++;
         }
      }
 
-     // --- 3. State Transition ---
-     if (u.target) {
-        const dist = Math.sqrt((u.target.x - u.x)**2 + (u.target.y - u.y)**2);
-        
-        if (u.faction === Faction.ZERG) { 
-            u.state = 'MOVE'; 
-            if (dist <= u.radius + u.target.radius + COLLISION_BUFFER || dist <= u.range) {
-                u.state = 'ATTACK'; 
-            }
-        } else { 
-            u.state = 'IDLE'; 
-            if (dist <= u.range) u.state = 'ATTACK'; 
-        }
-     } else {
-         u.state = u.faction === Faction.ZERG ? 'MOVE' : 'IDLE';
-     }
-
-     // --- 4. Movement Logic (Fluid Dynamics) ---
-     if (u.state === 'MOVE' || u.state === 'IDLE') {
-        let dxMove = 0; 
-        let dyMove = 0;
-        
-        const currentSpeed = u.speed * u.speedVar; // Apply individual speed variance
-
-        if (u.faction === Faction.ZERG && u.state === 'MOVE') {
-            if (u.target) {
-                // A. Chase Target
-                const dist = Math.sqrt((u.target.x - u.x)**2 + (u.target.y - u.y)**2);
-                if (dist > 0) {
-                    const dirX = (u.target.x - u.x) / dist;
-                    const dirY = (u.target.y - u.y) / dist;
-                    
-                    dxMove += dirX * currentSpeed * dt;
-                    dyMove += dirY * currentSpeed * dt;
-                }
-            } else {
-                // B. Swarm Flow (No Target / All Targets Full)
-                // Move Right + Sine Wave Oscillation
-                const time = Date.now() / 1000;
-                const wave = Math.sin(time + u.waveOffset) * 20; // Gentle wave
-                
-                dxMove += currentSpeed * dt; // Full speed ahead
-                dyMove += wave * dt;         // Lateral noise
-                
-                // Return to center bias (weak)
-                const distToCenter = LANE_Y - u.y;
-                dyMove += distToCenter * 0.1 * dt; 
-            }
-        }
-
-        // C. Boids Separation (Enhanced for Swarm Spread)
-        for (const friend of friends) {
-            if (friend === u) continue;
-            if (Math.abs(friend.x - u.x) > 40) continue; 
-
-            const distSq = (u.x - friend.x)**2 + (u.y - friend.y)**2;
-            const repelRadius = u.radius + friend.radius + 3; 
-            
-            if (distSq < repelRadius * repelRadius && distSq > 0.001) {
-                const d = Math.sqrt(distSq);
-                const force = (repelRadius - d) / repelRadius; 
-                
-                // Significant Y-axis push to force the swarm to spread vertically into a "wall"
-                const pushX = (u.x - friend.x) / d * force * 100 * dt;
-                const pushY = (u.y - friend.y) / d * force * 500 * dt; 
-                dxMove += pushX;
-                dyMove += pushY;
-            }
-        }
-
-        // Apply Movement
-        u.x += dxMove; 
-        u.y += dyMove;
-
-        // D. Terrain Obstacles
-        for (const obs of OBSTACLES) {
-            const obsY = LANE_Y + obs.y;
-            const dx = u.x - obs.x;
-            const dy = u.y - obsY;
-            const distSq = dx*dx + dy*dy;
-            const minSep = u.radius + obs.radius;
-
-            if (distSq < minSep * minSep) {
-                const d = Math.sqrt(distSq);
-                const nx = dx / d;
-                const ny = dy / d;
-                const penetration = minSep - d;
-                
-                u.x += nx * penetration;
-                u.y += ny * penetration;
-                u.y += (ny > 0 ? 1 : -1) * 200 * dt; // Slide
-            }
-        }
-
-        // Bounds
-        if (u.y < LANE_Y - LANE_HEIGHT/2) u.y = LANE_Y - LANE_HEIGHT/2; 
-        if (u.y > LANE_Y + LANE_HEIGHT/2) u.y = LANE_Y + LANE_HEIGHT/2;
-        
-        // Visual Update
-        if (u.view) {
-             u.view.y = u.y;
-             if (Math.abs(dxMove) > 0.1) {
-                 // Bumping animation
-                 u.view.y += Math.sin(u.x * 0.15) * 2; 
-                 // Flip based on movement direction
-                 u.view.scale.x = dxMove < 0 ? -1 : 1;
-             }
-        }
-
-     } else if (u.state === 'ATTACK') {
-        // --- 5. Attack Logic ---
-        u.attackCooldown -= dt; 
-        
-        if (u.target && u.view) {
-             const dx = u.target.x - u.x;
-             u.view.scale.x = dx < 0 ? -1 : 1;
-        }
-
-        if (u.attackCooldown <= 0 && u.target) { 
-            u.attackCooldown = u.maxAttackCooldown; 
-            if (u.statuses['FROZEN']) u.attackCooldown *= 1.5;
-            this.performAttack(u, u.target); 
-        }
-        if (u.view) u.view.y = u.y;
-     }
+     // --- 3. DECOUPLED PHYSICS & COMBAT (Run & Gun) ---
      
-     // Final View Sync
-     if (u.view) {
+     let dxMove = 0;
+     let dyMove = 0;
+     let isMoving = false;
+     const time = Date.now() / 1000;
+
+     // A. MOVEMENT LAYER
+     // We move IF we have a target and we are outside "Ideal Range"
+     // OR if we have no target (Swarm Flow)
+     if (u.target && !u.target.isDead) {
+         const dist = Math.sqrt((u.target.x - u.x)**2 + (u.target.y - u.y)**2);
+         
+         // Stop Threshold:
+         // Melee: Touch (radius + radius)
+         // Ranged: DRASTICALLY REDUCED to 20% of range. 
+         // This forces them to keep moving closer even if they can shoot, creating density.
+         const stopThreshold = !isRanged 
+            ? (u.radius + u.target.radius + COLLISION_BUFFER) 
+            : (u.range * 0.2); 
+
+         if (dist > stopThreshold) {
+             let currentSpeed = u.speed * u.speedVar;
+
+             // Move & Shoot Penalty:
+             // If ranged unit is inside max range but moving to close gap, slow down.
+             // This "stutter step" visual prevents them from running past enemies too fast.
+             if (isRanged && dist <= u.range) {
+                 currentSpeed *= 0.4; // 40% speed while firing
+             }
+
+             const dirX = (u.target.x - u.x) / dist;
+             const dirY = (u.target.y - u.y) / dist;
+             
+             // Apply Speed Noise to movement towards target too
+             const noise = 1 + Math.sin(time * 3 + u.waveOffset) * 0.1;
+
+             dxMove += dirX * currentSpeed * noise * dt;
+             dyMove += dirY * currentSpeed * noise * dt;
+             isMoving = true;
+         }
+     } else {
+         // No Target: Flow Right (Bypass Mode)
+         if (u.faction === Faction.ZERG) {
+            const currentSpeed = u.speed * u.speedVar;
+            // Low freq sine wave for lane drift
+            const wave = Math.sin(time + u.waveOffset) * 20; 
+            // Speed surge noise
+            const surge = 1 + Math.sin(time * 2 + u.waveOffset) * 0.2; 
+            
+            dxMove += currentSpeed * surge * dt;
+            dyMove += wave * dt;
+            isMoving = true;
+         }
+     }
+
+     // B. SEPARATION (Boids) & TACTICAL RECYCLING
+     for (const friend of friends) {
+        if (friend === u) continue;
+        
+        // Zerg collision filter: Only collide with same type
+        if (u.faction === Faction.ZERG && u.type !== friend.type) continue;
+        
+        if (Math.abs(friend.x - u.x) > 40) continue; 
+
+        const distSq = (u.x - friend.x)**2 + (u.y - friend.y)**2;
+        const repelRadius = u.radius + friend.radius + 3; 
+        
+        if (distSq < repelRadius * repelRadius && distSq > 0.001) {
+            
+            // --- TACTICAL RECYCLING (DENSITY CHECK) ---
+            if (u.faction === Faction.ZERG && u.type === friend.type && u.state !== 'ATTACK') {
+                const overlapLimit = (u.radius * 0.8)**2; 
+                if (distSq < overlapLimit) {
+                    if (u.y < friend.y) {
+                        this.recycleUnitToStockpile(u);
+                        return; // Stop processing
+                    }
+                }
+            }
+            // ------------------------------------------
+
+            const d = Math.sqrt(distSq);
+            const force = (repelRadius - d) / repelRadius; 
+            
+            const pushX = (u.x - friend.x) / d * force * 100 * dt;
+            // Strong lateral squeeze to force spreading out
+            const pushY = (u.y - friend.y) / d * force * 800 * dt; 
+            
+            dxMove += pushX;
+            dyMove += pushY;
+            
+            if (Math.abs(pushX) > 0.5) isMoving = true;
+        }
+    }
+
+    // Apply Movement
+    u.x += dxMove;
+    u.y += dyMove;
+
+    // C. TERRAIN OBSTACLES
+    for (const obs of OBSTACLES) {
+        const obsY = LANE_Y + obs.y;
+        const dx = u.x - obs.x;
+        const dy = u.y - obsY;
+        const distSq = dx*dx + dy*dy;
+        const minSep = u.radius + obs.radius;
+
+        if (distSq < minSep * minSep) {
+            const d = Math.sqrt(distSq);
+            const nx = dx / d;
+            const ny = dy / d;
+            const penetration = minSep - d;
+            
+            u.x += nx * penetration;
+            u.y += ny * penetration;
+            u.y += (ny > 0 ? 1 : -1) * 200 * dt; 
+        }
+    }
+
+    // Bounds
+    if (u.y < LANE_Y - LANE_HEIGHT/2) u.y = LANE_Y - LANE_HEIGHT/2; 
+    if (u.y > LANE_Y + LANE_HEIGHT/2) u.y = LANE_Y + LANE_HEIGHT/2;
+
+    // Update Visual Position
+    if (u.view) {
         u.view.position.x = u.x;
+        u.view.y = u.y;
         u.view.zIndex = u.y;
+        
+        if (Math.abs(dxMove) > 0.1) {
+            u.view.scale.x = dxMove < 0 ? -1 : 1;
+            // Bounce
+            u.view.y += Math.sin(u.x * 0.15) * 2;
+        }
+        
+        // HP Bar Update
         if (u.hpBar) {
             u.hpBar.clear();
             if (u.hp < u.maxHp) {
@@ -998,7 +1042,26 @@ export class GameEngine {
                 u.hpBar.beginFill(pct < 0.3 ? 0xff0000 : 0x00ff00); u.hpBar.drawRect(-12, -u.radius * 2 - 10, 24 * pct, 4); u.hpBar.endFill();
             }
         }
-     }
+    }
+
+    // D. COMBAT LAYER
+    u.attackCooldown -= dt;
+    if (u.target && !u.target.isDead) {
+         const dist = Math.sqrt((u.target.x - u.x)**2 + (u.target.y - u.y)**2);
+         // Shoot if in range
+         if (dist <= u.range) {
+             u.state = 'ATTACK'; // Just for visual tag, doesn't lock movement anymore
+             if (u.attackCooldown <= 0) {
+                 u.attackCooldown = u.maxAttackCooldown;
+                 if (u.statuses['FROZEN']) u.attackCooldown *= 1.5;
+                 this.performAttack(u, u.target);
+             }
+         } else {
+             u.state = isMoving ? 'MOVE' : 'IDLE';
+         }
+    } else {
+        u.state = isMoving ? 'MOVE' : 'IDLE';
+    }
   }
 
   private updateUnitVisuals(u: Unit) {
@@ -1240,14 +1303,30 @@ export class GameEngine {
           isPaused: this.isPaused
       };
 
+      const activeZergCounts: Record<string, number> = {};
+      // Initialize with 0 for all known zerg types
+      [UnitType.MELEE, UnitType.RANGED, UnitType.PYROVORE, UnitType.CRYOLISK, UnitType.OMEGALIS, UnitType.QUEEN].forEach(t => {
+          activeZergCounts[t] = 0;
+      });
+
       if (!this.app || !this.unitPool) {
-          return { ...baseSnapshot, unitCountZerg: 0, unitCountHuman: 0 };
+          return { ...baseSnapshot, unitCountZerg: 0, unitCountHuman: 0, activeZergCounts };
       }
+      
       const active = this.unitPool.getActiveUnits();
+      const zergUnits = active.filter(u => u.faction === Faction.ZERG && !u.isDead);
+      
+      zergUnits.forEach(u => {
+          if (activeZergCounts[u.type] !== undefined) {
+              activeZergCounts[u.type]++;
+          }
+      });
+
       return {
           ...baseSnapshot,
-          unitCountZerg: active.filter(u => u.faction === Faction.ZERG && !u.isDead).length,
+          unitCountZerg: zergUnits.length,
           unitCountHuman: active.filter(u => u.faction === Faction.HUMAN && !u.isDead).length,
+          activeZergCounts
       };
   }
   
