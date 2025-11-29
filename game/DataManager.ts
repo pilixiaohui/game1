@@ -78,6 +78,10 @@ export class DataManager {
                     if (!this.state.hive.unlockedUnits[u]) {
                         this.state.hive.unlockedUnits[u] = JSON.parse(JSON.stringify(INITIAL_GAME_STATE.hive.unlockedUnits[u] || {id:u}));
                     }
+                    // FIX: Ensure units are producing by default if not set (migration fix)
+                    if (this.state.hive.unlockedUnits[u].isProducing === undefined) {
+                         this.state.hive.unlockedUnits[u].isProducing = true;
+                    }
                 });
                 this.calculateOfflineProgress();
             }

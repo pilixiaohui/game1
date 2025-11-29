@@ -1,6 +1,6 @@
 import { Application, Container, Graphics, TilingSprite, Text, TextStyle } from 'pixi.js';
 import { Faction, GameModifiers, UnitType, GameStateSnapshot, RoguelikeCard, ElementType, StatusType, StatusEffect } from '../types';
-import { UNIT_CONFIGS, LANE_Y, LANE_HEIGHT, DECAY_TIME, MILESTONE_DISTANCE, COLLISION_BUFFER, MAX_SCREEN_UNITS, ELEMENT_COLORS, INITIAL_REGIONS_CONFIG, STATUS_CONFIG, STRONGHOLDS, OBSTACLES } from '../constants';
+import { UNIT_CONFIGS, LANE_Y, LANE_HEIGHT, DECAY_TIME, MILESTONE_DISTANCE, COLLISION_BUFFER, UNIT_SCREEN_CAPS, ELEMENT_COLORS, INITIAL_REGIONS_CONFIG, STATUS_CONFIG, STRONGHOLDS, OBSTACLES } from '../constants';
 import { DataManager } from './DataManager';
 
 // --- ECS-lite UNIT CLASS ---
@@ -41,6 +41,11 @@ class Unit {
   wanderTimer: number = 0;
   wanderDir: number = 0;
   
+  // --- Swarm AI Properties ---
+  engagedCount: number = 0; // How many attackers are currently locking this unit
+  speedVar: number = 1.0;   // Speed variance factor (0.9 - 1.1)
+  waveOffset: number = 0;   // Offset for sine wave movement
+  
   // Visuals
   view: Graphics | null = null;
   hpBar: Graphics | null = null;
@@ -48,7 +53,11 @@ class Unit {
   // --- NEW: STATUS MANAGER COMPONENT ---
   statuses: Partial<Record<StatusType, StatusEffect>> = {};
 
-  constructor(id: number) { this.id = id; }
+  constructor(id: number) { 
+      this.id = id; 
+      this.speedVar = 0.9 + Math.random() * 0.2; // +/- 10% speed
+      this.waveOffset = Math.random() * 100;
+  }
 }
 
 class UnitPool {
@@ -86,6 +95,11 @@ class UnitPool {
     unit.attackCooldown = 0;
     unit.statuses = {}; // Reset statuses
     unit.flashTimer = 0;
+    
+    // Reset AI props
+    unit.engagedCount = 0;
+    unit.speedVar = 0.9 + Math.random() * 0.2;
+    unit.waveOffset = Math.random() * 100;
 
     let stats;
     if (faction === Faction.ZERG) {
@@ -176,8 +190,16 @@ class UnitPool {
              unit.view.beginFill(0xffffff, 0.9);
              unit.view.drawCircle(8, -height + 12, 4);
              unit.view.endFill();
+         } else if (unit.type === UnitType.QUEEN) {
+             // Queen visual - taller, majestic
+             unit.view.drawRoundedRect(-width/2, -height, width, height, 10);
+             unit.view.drawCircle(0, -height, width/1.5);
+             unit.view.endFill();
+             unit.view.beginFill(0xffffff, 0.9);
+             unit.view.drawCircle(0, -height + 15, 4);
+             unit.view.endFill();
          } else {
-             // Default (Melee/Ranged/Queen)
+             // Default (Melee/Ranged)
              unit.view.drawRoundedRect(-width / 2, -height, width, height, 4);
              unit.view.endFill();
              // Eye
@@ -331,7 +353,7 @@ export class GameEngine {
     this.unitLayer.sortableChildren = true;
     this.world.addChild(this.unitLayer);
     this.world.addChild(this.particleLayer);
-    this.unitPool = new UnitPool(400, this.unitLayer);
+    this.unitPool = new UnitPool(800, this.unitLayer); // Increased pool size to accommodate more units
     this.app.ticker.add(this.update.bind(this));
   }
 
@@ -366,6 +388,12 @@ export class GameEngine {
 
     const allUnits = this.unitPool!.getActiveUnits();
     const livingUnits = allUnits.filter(u => !u.isDead);
+    
+    // --- NEW: Reset Engagement Counters per frame ---
+    // This allows us to re-evaluate who is attacking whom every frame, preventing "slot sticking" issues
+    livingUnits.forEach(u => u.engagedCount = 0);
+    // ------------------------------------------------
+
     const zergUnits = livingUnits.filter(u => u.faction === Faction.ZERG);
     const humanUnits = livingUnits.filter(u => u.faction === Faction.HUMAN);
     zergUnits.sort((a, b) => a.x - b.x); 
@@ -627,11 +655,13 @@ export class GameEngine {
   private handleDeployment(dt: number) {
     if (!this.app || !this.unitPool) return;
     this.deploymentTimer += dt;
-    if (this.deploymentTimer < 0.2) return; 
+    if (this.deploymentTimer < 0.1) return; // Faster deployment for larger caps
     this.deploymentTimer = 0;
 
     const activeZerg = this.unitPool.getActiveUnits().filter(u => u.faction === Faction.ZERG && !u.isDead);
-    if (activeZerg.length >= MAX_SCREEN_UNITS) return;
+    
+    // REMOVED GLOBAL CAP CHECK
+    // if (activeZerg.length >= MAX_SCREEN_UNITS) return;
 
     const stockpile = DataManager.instance.state.hive.unitStockpile;
     const spawnX = this.cameraX - 100 - (Math.random() * 50);
@@ -640,11 +670,21 @@ export class GameEngine {
     
     if (availableTypes.length === 0) return;
 
-    const totalAvailable = availableTypes.reduce((acc, t) => acc + (stockpile[t] || 0), 0);
+    // Filter by Per-Unit Screen Caps
+    const spawnableTypes = availableTypes.filter(t => {
+        const currentCount = activeZerg.filter(u => u.type === t).length;
+        return currentCount < UNIT_SCREEN_CAPS[t];
+    });
+
+    if (spawnableTypes.length === 0) return;
+
+    // Weighted selection logic or simple first available
+    // Let's use simple logic: try to fill gaps proportionally or just pick random available
+    const totalAvailable = spawnableTypes.reduce((acc, t) => acc + (stockpile[t] || 0), 0);
     let r = Math.random() * totalAvailable;
-    let selectedType = availableTypes[0];
+    let selectedType = spawnableTypes[0];
     
-    for (const t of availableTypes) {
+    for (const t of spawnableTypes) {
         r -= (stockpile[t] || 0);
         if (r <= 0) {
             selectedType = t;
@@ -656,31 +696,46 @@ export class GameEngine {
     if (success) {
         this.unitPool.spawn(Faction.ZERG, selectedType, spawnX, this.modifiers);
         if (Math.random() < this.modifiers.doubleSpawnChance) {
-             this.unitPool.spawn(Faction.ZERG, selectedType, spawnX - 20, this.modifiers);
+            // Double spawn attempts also check cap
+            const currentCount = activeZerg.filter(u => u.type === selectedType).length;
+            if (currentCount + 1 < UNIT_SCREEN_CAPS[selectedType]) {
+                 this.unitPool.spawn(Faction.ZERG, selectedType, spawnX - 20, this.modifiers);
+            }
         }
     }
   }
 
   private updateStockpileVisualization(dt: number) {
-      const VISUAL_CAP = 50; 
+      // iterate through all Zerg unit types in stockpile
       const stockpile = DataManager.instance.state.hive.unitStockpile;
-      const totalStored = Object.values(UnitType).reduce((acc, t) => acc + (stockpile[t] || 0), 0) - (stockpile[UnitType.QUEEN] || 0);
-      
       const activeVisuals = this.unitPool!.getActiveUnits().filter(u => u.faction === Faction.ZERG);
-      const currentVisualCount = activeVisuals.length;
-      const targetVisualCount = Math.min(VISUAL_CAP, totalStored);
-
-      if (currentVisualCount < targetVisualCount) {
-          const availableTypes = [UnitType.MELEE, UnitType.RANGED, UnitType.PYROVORE, UnitType.CRYOLISK, UnitType.OMEGALIS]; 
-          const type = availableTypes[Math.floor(Math.random() * availableTypes.length)];
-          const spawnX = Math.random() * this.app!.screen.width;
-          const u = this.unitPool!.spawn(Faction.ZERG, type, spawnX, this.modifiers);
-          if (u) u.state = 'WANDER';
-      }
-      if (currentVisualCount > targetVisualCount) {
-          const u = activeVisuals[0];
-          if (u) this.unitPool!.recycle(u);
-      }
+      
+      Object.values(UnitType).forEach(type => {
+          // Skip Human types
+          if (type.startsWith('HUMAN')) return;
+          
+          const storedCount = stockpile[type] || 0;
+          const visualCap = UNIT_SCREEN_CAPS[type];
+          const targetVisualCount = Math.min(storedCount, visualCap);
+          
+          const currentVisuals = activeVisuals.filter(u => u.type === type);
+          
+          // Spawn if deficit
+          if (currentVisuals.length < targetVisualCount) {
+             const spawnX = Math.random() * this.app!.screen.width;
+             const u = this.unitPool!.spawn(Faction.ZERG, type, spawnX, this.modifiers);
+             if (u) {
+                 u.state = 'WANDER';
+                 // Spread vertically
+                 u.y = LANE_Y + (Math.random() - 0.5) * LANE_HEIGHT;
+             }
+          }
+          // Despawn if surplus (e.g. stockpile consumed elsewhere or cap lowered)
+          else if (currentVisuals.length > targetVisualCount) {
+              const u = currentVisuals[0];
+              this.unitPool!.recycle(u);
+          }
+      });
   }
 
   private handleHumanSpawning(dt: number) {
@@ -704,7 +759,12 @@ export class GameEngine {
                  random -= entry.weight;
                  if (random <= 0) { selectedType = entry.type; break; }
              }
-             this.unitPool!.spawn(Faction.HUMAN, selectedType, spawnX, this.modifiers);
+             
+             // Check Enemy Cap
+             const currentEnemyCount = this.unitPool.getActiveUnits().filter(u => u.type === selectedType && !u.isDead).length;
+             if (currentEnemyCount < UNIT_SCREEN_CAPS[selectedType]) {
+                 this.unitPool!.spawn(Faction.HUMAN, selectedType, spawnX, this.modifiers);
+             }
         }
     }
   }
@@ -717,7 +777,7 @@ export class GameEngine {
      if (u.flashTimer > 0) u.flashTimer -= dt;
      this.updateUnitVisuals(u);
 
-     // --- 1. 漫步逻辑 (Stockpile Mode) - 保持不变 ---
+     // --- 1. Stockpile Wander Logic ---
      if (this.isStockpileMode && u.faction === Faction.ZERG) {
          u.state = 'WANDER'; u.target = null;
          u.wanderTimer -= dt;
@@ -733,100 +793,149 @@ export class GameEngine {
      // Micro-Stun Check (Shock)
      if (u.statuses['SHOCKED'] && Math.random() < 0.05) return; 
 
-     // --- 2. 改进的索敌逻辑 (Aggro System) ---
-     let nearestDist = Infinity; 
-     let nearestUnit: Unit | null = null;
+     // --- 2. Advanced Swarm AI: Engagement Slots & Sticky Targeting ---
      
-     // 定义索敌范围：人类视野通常较远，虫群则需要感知周围
-     // 增加此范围可以让单位去攻击侧翼或稍微身后的敌人
      const AGGRO_RANGE = 400; 
+     const getCapacity = (target: Unit) => Math.max(3, Math.floor((target.radius * 3) / 10));
 
-     for (const enemy of enemies) {
-        // 简单的圆形距离检测，不再限制 X 轴方向
-        const distSq = (enemy.x - u.x)**2 + (enemy.y - u.y)**2;
+     let shouldSearch = true;
+
+     // A. Check if current target is still valid and if we should keep it
+     if (u.target) {
+         if (u.target.isDead) {
+             u.target = null;
+         } else {
+             const distSq = (u.target.x - u.x)**2 + (u.target.y - u.y)**2;
+             if (distSq > AGGRO_RANGE * AGGRO_RANGE) {
+                 u.target = null;
+             } else {
+                 // Target is alive and in range.
+                 // CRITICAL FIX: If we are already ATTACKING (state === ATTACK), 
+                 // we maintain the lock regardless of capacity. We are "in the slot".
+                 const capacity = u.range < 50 ? getCapacity(u.target) : 20;
+                 
+                 if (u.state === 'ATTACK') {
+                     // We are engaged. Maintain lock.
+                     u.target.engagedCount++;
+                     shouldSearch = false; 
+                 } else {
+                     // We are running towards it. Is there still room?
+                     // Or did someone else steal the slot while we were running?
+                     if (u.target.engagedCount < capacity) {
+                         u.target.engagedCount++;
+                         shouldSearch = false;
+                     } else {
+                         // It's full. Abandon ship and find a new target.
+                         u.target = null;
+                     }
+                 }
+             }
+         }
+     }
+
+     // B. Search for new target (if needed)
+     if (shouldSearch) {
+        let bestTarget: Unit | null = null;
+        let minDist = Infinity;
+
+        for (const enemy of enemies) {
+            const distSq = (enemy.x - u.x)**2 + (enemy.y - u.y)**2;
+            if (distSq > AGGRO_RANGE * AGGRO_RANGE) continue;
+
+            // Slot Logic: Check if target is full
+            const isMelee = u.range < 50; 
+            const capacity = isMelee ? getCapacity(enemy) : 20; 
+
+            if (enemy.engagedCount >= capacity) continue; // Skip if full
+
+            if (distSq < minDist) { 
+                minDist = distSq; 
+                bestTarget = enemy; 
+            }
+        }
         
-        if (distSq > AGGRO_RANGE * AGGRO_RANGE) continue; // 超出警戒范围
-
-        // 优先攻击：距离更近的敌人
-        // 可选优化：优先攻击正在攻击自己的敌人（仇恨系统），目前先用纯距离
-        if (distSq < nearestDist) { 
-            nearestDist = distSq; 
-            nearestUnit = enemy; 
+        u.target = bestTarget;
+        if (u.target) {
+            u.target.engagedCount++;
         }
      }
-     
-     // 将距离平方开根号以便后续使用
-     nearestDist = Math.sqrt(nearestDist);
-     u.target = nearestUnit;
 
-     // --- 3. 状态机切换 ---
-     if (u.faction === Faction.ZERG) { 
-         u.state = 'MOVE'; 
-         // 如果有目标，且在攻击范围内（半径之和 + 碰撞缓冲 或 射程）
-         if (u.target && (nearestDist <= u.radius + u.target.radius + COLLISION_BUFFER || nearestDist <= u.range)) {
-            u.state = 'ATTACK'; 
-         }
-     } else { 
-         // 人类逻辑：原地防守
-         u.state = 'IDLE'; 
-         if (u.target && nearestDist <= u.range) u.state = 'ATTACK'; 
+     // --- 3. State Transition ---
+     if (u.target) {
+        const dist = Math.sqrt((u.target.x - u.x)**2 + (u.target.y - u.y)**2);
+        
+        if (u.faction === Faction.ZERG) { 
+            u.state = 'MOVE'; 
+            if (dist <= u.radius + u.target.radius + COLLISION_BUFFER || dist <= u.range) {
+                u.state = 'ATTACK'; 
+            }
+        } else { 
+            u.state = 'IDLE'; 
+            if (dist <= u.range) u.state = 'ATTACK'; 
+        }
+     } else {
+         u.state = u.faction === Faction.ZERG ? 'MOVE' : 'IDLE';
      }
 
-     // --- 4. 移动逻辑 (Movement Physics) ---
+     // --- 4. Movement Logic (Fluid Dynamics) ---
      if (u.state === 'MOVE' || u.state === 'IDLE') {
         let dxMove = 0; 
         let dyMove = 0;
         
-        // A. 基础移动 (追击或巡逻)
+        const currentSpeed = u.speed * u.speedVar; // Apply individual speed variance
+
         if (u.faction === Faction.ZERG && u.state === 'MOVE') {
             if (u.target) {
-                // [核心修改]：如果有目标，向目标方向移动！
-                // 计算归一化向量
-                const dist = nearestDist; // 上面算过的
+                // A. Chase Target
+                const dist = Math.sqrt((u.target.x - u.x)**2 + (u.target.y - u.y)**2);
                 if (dist > 0) {
                     const dirX = (u.target.x - u.x) / dist;
                     const dirY = (u.target.y - u.y) / dist;
                     
-                    dxMove += dirX * u.speed * dt;
-                    dyMove += dirY * u.speed * dt;
+                    dxMove += dirX * currentSpeed * dt;
+                    dyMove += dirY * currentSpeed * dt;
                 }
             } else {
-                // [核心修改]：没有目标，默认向右巡逻，但是会稍微回归中心轴 (LANE_Y)
-                // 这样避免虫子因为之前的避障跑到屏幕最边缘回不来
-                dxMove += u.speed * dt * 1; // 向右
+                // B. Swarm Flow (No Target / All Targets Full)
+                // Move Right + Sine Wave Oscillation
+                const time = Date.now() / 1000;
+                const wave = Math.sin(time + u.waveOffset) * 20; // Gentle wave
                 
-                // 缓慢回归中心 Y 轴的趋势 (可选，让队形更紧凑)
+                dxMove += currentSpeed * dt; // Full speed ahead
+                dyMove += wave * dt;         // Lateral noise
+                
+                // Return to center bias (weak)
                 const distToCenter = LANE_Y - u.y;
-                dyMove += distToCenter * 0.5 * dt; 
+                dyMove += distToCenter * 0.1 * dt; 
             }
         }
 
-        // B. 流体挤压 (Boids Separation) - 保持之前的代码
+        // C. Boids Separation (Enhanced for Swarm Spread)
         for (const friend of friends) {
             if (friend === u) continue;
-            if (Math.abs(friend.x - u.x) > 30) continue; 
+            if (Math.abs(friend.x - u.x) > 40) continue; 
 
             const distSq = (u.x - friend.x)**2 + (u.y - friend.y)**2;
-            const repelRadius = u.radius + friend.radius + 2; 
+            const repelRadius = u.radius + friend.radius + 3; 
             
             if (distSq < repelRadius * repelRadius && distSq > 0.001) {
-                const dist = Math.sqrt(distSq);
-                const force = (repelRadius - dist) / repelRadius; 
-                // Y轴推力更强，形成侧向分流
-                const pushX = (u.x - friend.x) / dist * force * 100 * dt;
-                const pushY = (u.y - friend.y) / dist * force * 300 * dt; 
+                const d = Math.sqrt(distSq);
+                const force = (repelRadius - d) / repelRadius; 
+                
+                // Significant Y-axis push to force the swarm to spread vertically into a "wall"
+                const pushX = (u.x - friend.x) / d * force * 100 * dt;
+                const pushY = (u.y - friend.y) / d * force * 500 * dt; 
                 dxMove += pushX;
                 dyMove += pushY;
             }
         }
 
-        // 应用位移
+        // Apply Movement
         u.x += dxMove; 
         u.y += dyMove;
 
-        // C. 地形障碍物 (Obstacles) - 保持之前的代码
+        // D. Terrain Obstacles
         for (const obs of OBSTACLES) {
-            // Note: Obstacles are defined relative to LANE_Y in constants
             const obsY = LANE_Y + obs.y;
             const dx = u.x - obs.x;
             const dy = u.y - obsY;
@@ -834,57 +943,50 @@ export class GameEngine {
             const minSep = u.radius + obs.radius;
 
             if (distSq < minSep * minSep) {
-                const dist = Math.sqrt(distSq);
-                const nx = dx / dist;
-                const ny = dy / dist;
-                const penetration = minSep - dist;
+                const d = Math.sqrt(distSq);
+                const nx = dx / d;
+                const ny = dy / d;
+                const penetration = minSep - d;
                 
-                // Push out
                 u.x += nx * penetration;
                 u.y += ny * penetration;
-                
-                // Slide tangential (Flow around)
-                u.y += (ny > 0 ? 1 : -1) * 200 * dt; 
+                u.y += (ny > 0 ? 1 : -1) * 200 * dt; // Slide
             }
         }
 
-        // 边界限制
+        // Bounds
         if (u.y < LANE_Y - LANE_HEIGHT/2) u.y = LANE_Y - LANE_HEIGHT/2; 
         if (u.y > LANE_Y + LANE_HEIGHT/2) u.y = LANE_Y + LANE_HEIGHT/2;
         
-        // 视图更新
-        if (u.view && Math.abs(dxMove) > 0.5) {
-             u.view.y = u.y + Math.sin(u.x * 0.15) * 2; 
-             // 根据移动方向翻转贴图 (如果向左追击)
-             if (dxMove < 0) u.view.scale.x = -1;
-             else u.view.scale.x = 1;
-        } else if (u.view) {
+        // Visual Update
+        if (u.view) {
              u.view.y = u.y;
+             if (Math.abs(dxMove) > 0.1) {
+                 // Bumping animation
+                 u.view.y += Math.sin(u.x * 0.15) * 2; 
+                 // Flip based on movement direction
+                 u.view.scale.x = dxMove < 0 ? -1 : 1;
+             }
         }
 
      } else if (u.state === 'ATTACK') {
-        // --- 5. 攻击逻辑 ---
+        // --- 5. Attack Logic ---
         u.attackCooldown -= dt; 
         
-        // 攻击时稍微转向目标 (视觉优化)
         if (u.target && u.view) {
              const dx = u.target.x - u.x;
-             if (dx < 0) u.view.scale.x = -1;
-             else u.view.scale.x = 1;
+             u.view.scale.x = dx < 0 ? -1 : 1;
         }
 
         if (u.attackCooldown <= 0 && u.target) { 
             u.attackCooldown = u.maxAttackCooldown; 
-            
-            // Attack Speed modification by status
             if (u.statuses['FROZEN']) u.attackCooldown *= 1.5;
-
             this.performAttack(u, u.target); 
         }
         if (u.view) u.view.y = u.y;
      }
      
-     // 统一更新视图位置
+     // Final View Sync
      if (u.view) {
         u.view.position.x = u.x;
         u.view.zIndex = u.y;
@@ -943,7 +1045,6 @@ export class GameEngine {
      const isRanged = source.type === UnitType.RANGED || source.type === UnitType.PYROVORE || source.type === UnitType.HUMAN_MARINE || source.type === UnitType.HUMAN_SNIPER || source.type === UnitType.HUMAN_TANK || source.type === UnitType.HUMAN_PYRO;
      
      if (isRanged) { 
-         // For Pyro, use a "beam" or "cloud" visual ideally, but projectile works for prototype
          this.createProjectile(source.x, source.y - 15, target.x, target.y - 15, color); 
      } else { 
          this.createFlash(target.x + (Math.random()*10-5), target.y - 10, color); 
@@ -1066,14 +1167,11 @@ export class GameEngine {
               p.view.x = p.startX + (p.endX - p.startX) * t;
               p.view.y = p.startY + (p.endY - p.startY) * t;
               if (t >= 1) {
-                  // Hacky: We need to trigger damage here but we don't have reference to units.
-                  // For this ECS Lite, we accept damage happens slightly disconnected or trigger it immediately in attack function with delay
-                  // In performAttack we have setTimeout, let's keep that for logic but use this for visual only.
                   return false; 
               }
               return true;
           }
-      } as any; // Cast to bypass simple type check for now
+      } as any; 
       this.activeParticles.push(p);
   }
 

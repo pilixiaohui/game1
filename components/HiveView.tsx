@@ -2,6 +2,7 @@
 
 
 
+
 import React, { useState } from 'react';
 import { GameSaveData, UnitType, HiveSection, Polarity } from '../types';
 import { UNIT_CONFIGS, METABOLISM_FACILITIES, BIO_PLUGINS, PLAYABLE_UNITS, MAX_RESOURCES_BASE } from '../constants';
@@ -517,12 +518,7 @@ export const HiveView: React.FC<HiveViewProps> = ({ globalState, onUpgrade, onCo
                             </div>
                         </div>
                         
-                        {/* Progress Bar */}
-                        {u.isProducing && currentCount < u.cap && (
-                             <div className="w-full h-1 bg-gray-800 rounded-full overflow-hidden mb-4">
-                                 <div className="h-full bg-green-500 transition-all duration-100" style={{ width: `${(u.productionProgress / stats.time) * 100}%` }} />
-                             </div>
-                        )}
+                        {/* REMOVED PROGRESS BAR VISUALIZATION */}
 
                         <div className="grid grid-cols-3 gap-2">
                              <button

@@ -15,8 +15,25 @@ export const MAX_RESOURCES_BASE = 2000000;
 export const INITIAL_LARVA_CAP = 1000;
 export const RESOURCE_TICK_RATE_BASE = 15; 
 export const UNIT_UPGRADE_COST_BASE = 100;
-export const MAX_SCREEN_UNITS = 60; // Increased for swarm feel
+// export const MAX_SCREEN_UNITS = 60; // DEPRECATED in favor of per-unit caps
 export const RECYCLE_REFUND_RATE = 0.8; 
+
+// --- NEW: PER-UNIT SCREEN CAPS (Local Battle Limits) ---
+export const UNIT_SCREEN_CAPS: Record<UnitType, number> = {
+    [UnitType.MELEE]: 50,      // Swarm
+    [UnitType.RANGED]: 30,     // Support
+    [UnitType.PYROVORE]: 15,   // Artillery
+    [UnitType.CRYOLISK]: 15,   // Elite
+    [UnitType.OMEGALIS]: 5,    // Heavy Tank (Massive)
+    [UnitType.QUEEN]: 5,       // Support
+    
+    // Enemy Caps per type
+    [UnitType.HUMAN_MARINE]: 30,
+    [UnitType.HUMAN_RIOT]: 15,
+    [UnitType.HUMAN_PYRO]: 10,
+    [UnitType.HUMAN_SNIPER]: 10,
+    [UnitType.HUMAN_TANK]: 5,
+};
 
 // UPGRADE COSTS
 export const CAP_UPGRADE_BASE = 50;
@@ -284,7 +301,7 @@ export const UNIT_CONFIGS: Record<UnitType, UnitConfig> = {
         color: 0xfacc15, // Yellow
         armor: 60
     },
-    baseCost: { biomass: 300, larva: 2, dna: 20, time: 15.0 },
+    baseCost: { biomass: 300, larva: 2, dna: 10, time: 15.0 }, // Reduced DNA to 10
     growthFactors: { hp: 0.4, damage: 0.1 },
     baseLoadCapacity: 80,
     slots: [{ polarity: 'DEFENSE' }, { polarity: 'DEFENSE' }, { polarity: 'UNIVERSAL' }, { polarity: 'UNIVERSAL' }],
@@ -304,7 +321,7 @@ export const UNIT_CONFIGS: Record<UnitType, UnitConfig> = {
         color: 0xd946ef, 
         armor: 20
     },
-    baseCost: { biomass: 150, larva: 1, dna: 5, time: 10.0 },
+    baseCost: { biomass: 150, larva: 1, dna: 0, time: 10.0 }, // REMOVED DNA COST TO FIX EARLY GAME LOCK
     growthFactors: { hp: 0.1, damage: 0.1 },
     baseLoadCapacity: 50,
     slots: [{ polarity: 'UNIVERSAL' }, { polarity: 'FUNCTION' }, { polarity: 'DEFENSE' }]
@@ -470,27 +487,27 @@ export const INITIAL_GAME_STATE: GameSaveData = {
         unlockedUnits: {
             [UnitType.MELEE]: { 
                 id: UnitType.MELEE, level: 1, loadout: [null, null, null, null, null],
-                cap: 100, capLevel: 1, efficiencyLevel: 1, isProducing: true, productionProgress: 0
+                cap: 300, capLevel: 1, efficiencyLevel: 1, isProducing: true, productionProgress: 0
             },
             [UnitType.RANGED]: { 
                 id: UnitType.RANGED, level: 1, loadout: [null, null, null, null, null],
-                cap: 50, capLevel: 1, efficiencyLevel: 1, isProducing: false, productionProgress: 0
+                cap: 150, capLevel: 1, efficiencyLevel: 1, isProducing: true, productionProgress: 0
             },
             [UnitType.PYROVORE]: { 
                 id: UnitType.PYROVORE, level: 1, loadout: [null, null, null],
-                cap: 20, capLevel: 1, efficiencyLevel: 1, isProducing: false, productionProgress: 0
+                cap: 50, capLevel: 1, efficiencyLevel: 1, isProducing: true, productionProgress: 0
             },
             [UnitType.CRYOLISK]: { 
                 id: UnitType.CRYOLISK, level: 1, loadout: [null, null, null],
-                cap: 30, capLevel: 1, efficiencyLevel: 1, isProducing: false, productionProgress: 0
+                cap: 50, capLevel: 1, efficiencyLevel: 1, isProducing: true, productionProgress: 0
             },
             [UnitType.OMEGALIS]: { 
                 id: UnitType.OMEGALIS, level: 1, loadout: [null, null, null, null],
-                cap: 5, capLevel: 1, efficiencyLevel: 1, isProducing: false, productionProgress: 0
+                cap: 10, capLevel: 1, efficiencyLevel: 1, isProducing: true, productionProgress: 0
             },
             [UnitType.QUEEN]: { 
                 id: UnitType.QUEEN, level: 1, loadout: [null, null, null],
-                cap: 5, capLevel: 1, efficiencyLevel: 1, isProducing: false, productionProgress: 0
+                cap: 10, capLevel: 1, efficiencyLevel: 1, isProducing: true, productionProgress: 0
             },
             
             [UnitType.HUMAN_MARINE]: { id: UnitType.HUMAN_MARINE, level: 0, loadout: [], cap:0, capLevel:0, efficiencyLevel:0, isProducing:false, productionProgress:0 },
@@ -500,8 +517,8 @@ export const INITIAL_GAME_STATE: GameSaveData = {
             [UnitType.HUMAN_TANK]: { id: UnitType.HUMAN_TANK, level: 0, loadout: [], cap:0, capLevel:0, efficiencyLevel:0, isProducing:false, productionProgress:0 },
         },
         unitStockpile: {
-            [UnitType.MELEE]: 10, 
-            [UnitType.RANGED]: 0,
+            [UnitType.MELEE]: 50, 
+            [UnitType.RANGED]: 20,
             [UnitType.PYROVORE]: 0,
             [UnitType.CRYOLISK]: 0,
             [UnitType.OMEGALIS]: 0,
