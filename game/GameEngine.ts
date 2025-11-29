@@ -362,9 +362,13 @@ export class GameEngine {
               this.dealTrueDamage(unit, dmg);
           }
 
-          // Decay Stacks slightly over time to prevent infinite accumulation without upkeep
-          if (Math.random() < STATUS_CONFIG.DECAY_RATE * 0.01 * dt) {
-              effect.stacks = Math.max(0, effect.stacks - 1);
+          // Decay Stacks using accumulator for stability
+          if (!effect.decayAccumulator) effect.decayAccumulator = 0;
+          effect.decayAccumulator += dt;
+          const decayInterval = 1.0 / STATUS_CONFIG.DECAY_RATE; 
+          while (effect.decayAccumulator >= decayInterval) {
+              if (effect.stacks > 0) effect.stacks--;
+              effect.decayAccumulator -= decayInterval;
           }
       }
 
@@ -372,7 +376,6 @@ export class GameEngine {
       const burn = unit.statuses['BURNING'];
       if (burn && burn.stacks >= STATUS_CONFIG.THRESHOLD_BURNING) {
           this.applyStatus(unit, 'ARMOR_BROKEN', 1, STATUS_CONFIG.ARMOR_BREAK_DURATION);
-          // Don't consume stacks, keep burning!
       }
 
       const freeze = unit.statuses['FROZEN'];
@@ -382,7 +385,6 @@ export class GameEngine {
           unit.speed = unit.baseSpeed * (1 - slowFactor);
           if (freeze.stacks >= STATUS_CONFIG.THRESHOLD_FROZEN) {
               unit.speed = 0; // Solid block of ice
-              // TODO: Pause animation frame
           }
       } else {
           unit.speed = unit.baseSpeed; // Reset if no freeze
@@ -398,7 +400,7 @@ export class GameEngine {
       if (target.isDead) return;
       
       if (!target.statuses[type]) {
-          target.statuses[type] = { type, stacks: 0, duration: 0 };
+          target.statuses[type] = { type, stacks: 0, duration: 0, decayAccumulator: 0 };
       }
       const s = target.statuses[type]!;
       s.stacks = Math.min(STATUS_CONFIG.MAX_STACKS, s.stacks + stacks);
@@ -426,14 +428,16 @@ export class GameEngine {
       let bonusMultiplier = 1.0;
 
       // A. Thermal Shock (Frozen + Thermal)
-      if (target.statuses['FROZEN'] && target.statuses['FROZEN']!.stacks > 20 && elementType === 'THERMAL') {
+      // Use 50% threshold for reaction (50 stacks)
+      if (target.statuses['FROZEN'] && target.statuses['FROZEN']!.stacks >= STATUS_CONFIG.THRESHOLD_FROZEN * 0.5 && elementType === 'THERMAL') {
           bonusMultiplier = 2.5;
           delete target.statuses['FROZEN']; // Remove primer
           reactionText = "THERMAL SHOCK!";
           this.createExplosion(target.x, target.y, 40, 0xffaa00);
       }
-      // B. Shatter (Frozen + Physical/Explosive)
-      else if (target.statuses['FROZEN'] && target.statuses['FROZEN']!.stacks > 80 && elementType === 'PHYSICAL') {
+      // B. Shatter (Frozen + Physical)
+      // High freeze threshold needed for shatter
+      else if (target.statuses['FROZEN'] && target.statuses['FROZEN']!.stacks >= STATUS_CONFIG.THRESHOLD_FROZEN * 0.8 && elementType === 'PHYSICAL') {
           const shatterDmg = target.maxHp * 0.15;
           this.dealTrueDamage(target, shatterDmg);
           delete target.statuses['FROZEN'];
@@ -751,7 +755,7 @@ export class GameEngine {
       // Death Effects (Toxin Cloud)
       if (u.statuses['POISONED']) {
           this.createExplosion(u.x, u.y, 40, 0x4ade80); // Visual Poison Cloud
-          // Spread poison to nearby
+          // Spread poison to nearby (including friends if it's a gas cloud, but let's stick to enemies for now for fun)
           this.unitPool!.getActiveUnits().forEach(other => {
               if (other === u || other.isDead || other.faction === u.faction) return;
               if (Math.abs(other.x - u.x) < 40 && Math.abs(other.y - u.y) < 40) {

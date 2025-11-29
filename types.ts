@@ -44,6 +44,7 @@ export interface StatusEffect {
     type: StatusType;
     stacks: number;      // 0 to 100 (Threshold)
     duration: number;    // Time remaining in seconds
+    decayAccumulator?: number; // For stable decay
     sourceId?: number;   // ID of the unit that applied it
 }
 

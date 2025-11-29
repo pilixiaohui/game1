@@ -15,7 +15,7 @@ export const INITIAL_LARVA_CAP = 1000;
 export const RESOURCE_TICK_RATE_BASE = 15; 
 export const MINERAL_TICK_RATE_BASE = 5;   
 export const UNIT_UPGRADE_COST_BASE = 100;
-export const MAX_SCREEN_UNITS = 50; // Increased for swarm feel
+export const MAX_SCREEN_UNITS = 60; // Increased for swarm feel
 export const RECYCLE_REFUND_RATE = 0.8; 
 
 // UPGRADE COSTS
@@ -65,7 +65,7 @@ export const METABOLISM_FACILITIES = {
     BREAKER: {
         NAME: "地壳破碎机 (Crust Breaker)",
         DESC: "震荡过载：极高产出，但导致 0.05% 原浆流失。",
-        BASE_COST: 150000,
+        BASE_COST: 150000, 
         GROWTH: 1.15,
         BASE_RATE: 650.0,
         LOSS_RATE: 0.0005, 
@@ -238,7 +238,7 @@ export const UNIT_CONFIGS: Record<UnitType, UnitConfig> = {
       name: '火焰兵 (Pyro)',
       baseStats: { hp: 150, damage: 5, range: 120, speed: 0, attackSpeed: 0.1, width: 24, height: 32, color: 0xea580c, armor: 20 },
       baseCost: {} as any, growthFactors: {} as any, slots: [], baseLoadCapacity: 0,
-      elementConfig: { type: 'THERMAL', statusPerHit: 4 } // High tick rate means fast stacking
+      elementConfig: { type: 'THERMAL', statusPerHit: 5 } // High tick rate means fast stacking
   },
   [UnitType.HUMAN_SNIPER]: {
       id: UnitType.HUMAN_SNIPER,
