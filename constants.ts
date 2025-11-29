@@ -32,6 +32,10 @@ export const STATUS_CONFIG = {
     THRESHOLD_SHOCK: 50,
     DOT_INTERVAL: 0.5, // Seconds between DoT ticks
     ARMOR_BREAK_DURATION: 999, // Effectively permanent until death
+
+    // Interaction Thresholds (Refined)
+    REACTION_THRESHOLD_MINOR: 50, // e.g. Thermal Shock requirement
+    REACTION_THRESHOLD_MAJOR: 80, // e.g. Shatter requirement
 };
 
 // METABOLISM FACILITIES

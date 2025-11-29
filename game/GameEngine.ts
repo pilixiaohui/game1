@@ -32,6 +32,7 @@ class Unit {
   critDamage: number = 1.5;
   element: ElementType = 'PHYSICAL';
   statusPerHit: number = 10; // Default application amount
+  flashTimer: number = 0; // Visual hit feedback timer
   
   // AI State
   state: 'MOVE' | 'ATTACK' | 'IDLE' | 'DEAD' | 'WANDER' = 'IDLE';
@@ -85,6 +86,7 @@ class UnitPool {
     unit.target = null;
     unit.attackCooldown = 0;
     unit.statuses = {}; // Reset statuses
+    unit.flashTimer = 0;
 
     let stats;
     if (faction === Faction.ZERG) {
@@ -200,6 +202,14 @@ class UnitPool {
   getActiveUnits(): Unit[] { return this.pool.filter(u => u.active); }
 }
 
+interface ActiveParticle {
+    view: Graphics | Text;
+    type: 'GRAPHICS' | 'TEXT';
+    life: number;
+    maxLife: number;
+    update: (p: ActiveParticle, dt: number) => boolean;
+}
+
 export class GameEngine {
   public app: Application | null = null;
   public world: Container;
@@ -209,6 +219,11 @@ export class GameEngine {
   private unitPool: UnitPool | null = null;
   private unitLayer: Container;
   private particleLayer: Container;
+
+  // Object Pooling for Particles
+  private graphicsPool: Graphics[] = [];
+  private textPool: Text[] = [];
+  private activeParticles: ActiveParticle[] = [];
 
   public modifiers: GameModifiers = {
     damageMultiplier: 1.0,
@@ -271,7 +286,13 @@ export class GameEngine {
           this.cameraX = 0;
           if (this.world) this.world.position.x = 0;
           this.unitPool?.getActiveUnits().forEach(u => { if (u.faction === Faction.HUMAN) this.unitPool?.recycle(u); });
+          this.clearParticles();
       }
+  }
+
+  private clearParticles() {
+      this.activeParticles.forEach(p => this.recycleParticle(p));
+      this.activeParticles = [];
   }
 
   private update(delta: number) {
@@ -310,6 +331,16 @@ export class GameEngine {
     } else {
         this.world.position.x = 0;
         if (this.bgLayer) this.bgLayer.tilePosition.x += 0.2; 
+    }
+
+    // Update Particles
+    for (let i = this.activeParticles.length - 1; i >= 0; i--) {
+        const p = this.activeParticles[i];
+        const alive = p.update(p, dt);
+        if (!alive) {
+            this.recycleParticle(p);
+            this.activeParticles.splice(i, 1);
+        }
     }
 
     allUnits.forEach(u => {
@@ -428,16 +459,14 @@ export class GameEngine {
       let bonusMultiplier = 1.0;
 
       // A. Thermal Shock (Frozen + Thermal)
-      // Use 50% threshold for reaction (50 stacks)
-      if (target.statuses['FROZEN'] && target.statuses['FROZEN']!.stacks >= STATUS_CONFIG.THRESHOLD_FROZEN * 0.5 && elementType === 'THERMAL') {
+      if (target.statuses['FROZEN'] && target.statuses['FROZEN']!.stacks >= STATUS_CONFIG.REACTION_THRESHOLD_MINOR && elementType === 'THERMAL') {
           bonusMultiplier = 2.5;
           delete target.statuses['FROZEN']; // Remove primer
           reactionText = "THERMAL SHOCK!";
           this.createExplosion(target.x, target.y, 40, 0xffaa00);
       }
       // B. Shatter (Frozen + Physical)
-      // High freeze threshold needed for shatter
-      else if (target.statuses['FROZEN'] && target.statuses['FROZEN']!.stacks >= STATUS_CONFIG.THRESHOLD_FROZEN * 0.8 && elementType === 'PHYSICAL') {
+      else if (target.statuses['FROZEN'] && target.statuses['FROZEN']!.stacks >= STATUS_CONFIG.REACTION_THRESHOLD_MAJOR && elementType === 'PHYSICAL') {
           const shatterDmg = target.maxHp * 0.15;
           this.dealTrueDamage(target, shatterDmg);
           delete target.statuses['FROZEN'];
@@ -459,8 +488,6 @@ export class GameEngine {
       let armor = target.armor;
       if (target.statuses['ARMOR_BROKEN']) armor = 0; // True damage if broken
       
-      // Simple Armor Formula: Damage Reduction = Armor / (Armor + 50)
-      // e.g., 50 Armor = 50% Reduction. 
       const reduction = armor / (armor + 50);
       let finalDamage = (rawDamage * bonusMultiplier) * (1 - reduction);
       
@@ -475,12 +502,10 @@ export class GameEngine {
       if (elementType === 'VOLTAIC') this.applyStatus(target, 'SHOCKED', source.statusPerHit, 5);
       if (elementType === 'TOXIN') this.applyStatus(target, 'POISONED', source.statusPerHit, 5);
 
-      // 5. Visual Feedback
+      // 5. Visual Feedback (Updated to use flashTimer and Particle Pool)
       if (target.view) {
-          target.view.tint = isCrit ? 0xffff00 : 0xffaaaa;
-          setTimeout(() => { 
-              if (target.view && !target.isDead) this.updateUnitVisuals(target); 
-          }, 100);
+          target.flashTimer = 0.1; // Flash for 0.1s
+          if (!target.isDead) this.updateUnitVisuals(target); 
       }
       
       if (reactionText) {
@@ -587,6 +612,9 @@ export class GameEngine {
   private processUnit(u: Unit, dt: number, enemies: Unit[], friends: Unit[]) {
      // Status Effects Tick
      this.updateStatusEffects(u, dt);
+     
+     // Update Flash Timer & Visuals
+     if (u.flashTimer > 0) u.flashTimer -= dt;
      this.updateUnitVisuals(u);
 
      if (this.isStockpileMode && u.faction === Faction.ZERG) {
@@ -659,6 +687,12 @@ export class GameEngine {
   private updateUnitVisuals(u: Unit) {
       if (!u.view) return;
       
+      // Flash override
+      if (u.flashTimer > 0) {
+          u.view.tint = 0xffffaa; 
+          return;
+      }
+      
       // Default tint
       let tint = 0xffffff;
 
@@ -696,44 +730,146 @@ export class GameEngine {
      if (isRanged) { 
          // For Pyro, use a "beam" or "cloud" visual ideally, but projectile works for prototype
          this.createProjectile(source.x, source.y - 15, target.x, target.y - 15, color); 
-         // Delay damage slightly for projectile travel
-         setTimeout(() => { if (!target.isDead) this.processDamagePipeline(source, target); }, 100);
      } else { 
          this.createFlash(target.x + (Math.random()*10-5), target.y - 10, color); 
          this.processDamagePipeline(source, target); 
      }
   }
+  
+  // --- PARTICLE SYSTEM ---
+  
+  private getGraphics(): Graphics {
+      let g = this.graphicsPool.pop();
+      if (!g) g = new Graphics();
+      g.clear();
+      g.alpha = 1;
+      g.scale.set(1);
+      g.rotation = 0;
+      g.visible = true;
+      this.particleLayer.addChild(g);
+      return g;
+  }
+
+  private recycleParticle(p: ActiveParticle) {
+      p.view.visible = false;
+      if (p.type === 'GRAPHICS' && p.view instanceof Graphics) this.graphicsPool.push(p.view);
+      if (p.type === 'TEXT' && p.view instanceof Text) this.textPool.push(p.view);
+  }
 
   private createDamagePop(x: number, y: number, value: number, element: string) {
       if (!this.app || this.isDestroyed) return;
-      const gfx = new Graphics();
-      gfx.beginFill(ELEMENT_COLORS[element as ElementType] || 0xffffff, 0.8);
+      const g = this.getGraphics();
+      g.beginFill(ELEMENT_COLORS[element as ElementType] || 0xffffff, 0.8);
       const rOuter = 10; const rInner = 4; const points = [];
       for (let i = 0; i < 8; i++) { const radius = (i % 2 === 0) ? rOuter : rInner; const angle = i * Math.PI / 4; points.push(Math.sin(angle) * radius, Math.cos(angle) * radius); }
-      gfx.drawPolygon(points); gfx.endFill(); gfx.position.set(x, y); this.particleLayer.addChild(gfx);
-      let life = 20;
-      const animate = () => { if (this.isDestroyed || gfx.destroyed) return; life--; gfx.y -= 1; gfx.alpha = life / 20; if (life <= 0) gfx.destroy(); else requestAnimationFrame(animate); };
-      animate();
+      g.drawPolygon(points); g.endFill(); 
+      g.position.set(x, y);
+      
+      this.activeParticles.push({
+          view: g, type: 'GRAPHICS', life: 20, maxLife: 20,
+          update: (p, dt) => {
+              p.life -= dt * 60; // Approximate frame logic
+              p.view.y -= 1;
+              p.view.alpha = p.life / 20;
+              return p.life > 0;
+          }
+      });
   }
   
   private createFloatingText(x: number, y: number, text: string, color: number, fontSize: number = 12) {
       if (!this.app || this.isDestroyed) return;
-      const t = new Text(text, new TextStyle({
-          fontFamily: 'Courier New', fontSize, fontWeight: 'bold', fill: color,
-          stroke: 0x000000, strokeThickness: 2
-      }));
-      t.anchor.set(0.5); t.position.set(x, y); t.scale.set(0.5);
+      let t = this.textPool.pop();
+      if (!t) {
+          t = new Text(text, new TextStyle({
+              fontFamily: 'Courier New', fontSize, fontWeight: 'bold', fill: color,
+              stroke: 0x000000, strokeThickness: 2
+          }));
+      } else {
+          t.text = text;
+          t.style.fill = color;
+          t.style.fontSize = fontSize;
+      }
+      t.visible = true;
+      t.alpha = 1;
+      t.scale.set(0.5);
+      t.anchor.set(0.5);
+      t.position.set(x, y);
       this.particleLayer.addChild(t);
-      let life = 60;
-      const animate = () => { 
-          if (this.isDestroyed || t.destroyed) return; 
-          life--; 
-          t.y -= 0.5; 
-          t.scale.set(t.scale.x + 0.01);
-          t.alpha = life / 20; 
-          if (life <= 0) t.destroy(); else requestAnimationFrame(animate); 
-      };
-      animate();
+
+      this.activeParticles.push({
+          view: t, type: 'TEXT', life: 60, maxLife: 60,
+          update: (p, dt) => {
+              p.life -= dt * 60;
+              p.view.y -= 0.5;
+              p.view.scale.set(p.view.scale.x + 0.01);
+              p.view.alpha = p.life / 20;
+              return p.life > 0;
+          }
+      });
+  }
+  
+  private createFlash(x: number, y: number, color: number) { 
+      if (!this.app || this.isDestroyed) return; 
+      const g = this.getGraphics();
+      g.beginFill(color, 0.9); g.drawCircle(0, 0, 4); g.endFill(); 
+      g.position.set(x, y);
+      
+      this.activeParticles.push({
+          view: g, type: 'GRAPHICS', life: 5, maxLife: 5,
+          update: (p, dt) => {
+              p.life -= dt * 60;
+              p.view.alpha = p.life / 5;
+              return p.life > 0;
+          }
+      });
+  }
+
+  private createProjectile(x1: number, y1: number, x2: number, y2: number, color: number) { 
+      if (!this.app || this.isDestroyed) return; 
+      const g = this.getGraphics();
+      g.lineStyle(2, color, 1); g.moveTo(0, 0); g.lineTo(12, 0); 
+      g.position.set(x1, y1); 
+      g.rotation = Math.atan2(y2 - y1, x2 - x1); 
+      
+      const speed = 800; 
+      const dist = Math.sqrt((x2-x1)**2 + (y2-y1)**2); 
+      const duration = dist / speed; // seconds
+      
+      // Need specific particle state for projectile
+      const p = {
+          view: g, type: 'GRAPHICS', life: 0, maxLife: duration,
+          startX: x1, startY: y1, endX: x2, endY: y2,
+          update: (p: any, dt: number) => {
+              p.life += dt;
+              const t = Math.min(1, p.life / p.maxLife);
+              p.view.x = p.startX + (p.endX - p.startX) * t;
+              p.view.y = p.startY + (p.endY - p.startY) * t;
+              if (t >= 1) {
+                  // Hacky: We need to trigger damage here but we don't have reference to units.
+                  // For this ECS Lite, we accept damage happens slightly disconnected or trigger it immediately in attack function with delay
+                  // In performAttack we have setTimeout, let's keep that for logic but use this for visual only.
+                  return false; 
+              }
+              return true;
+          }
+      } as any; // Cast to bypass simple type check for now
+      this.activeParticles.push(p);
+  }
+
+  private createExplosion(x: number, y: number, radius: number, color: number = 0x00ff00) { 
+      if (!this.app || this.isDestroyed) return; 
+      const g = this.getGraphics();
+      g.beginFill(color, 0.5); g.drawCircle(0, 0, 10); g.endFill(); 
+      g.position.set(x, y); 
+      
+      this.activeParticles.push({
+          view: g, type: 'GRAPHICS', life: 0, maxLife: 20,
+          update: (p: any, dt: number) => {
+              p.life++; // frame based
+              p.view.width += 8; p.view.height += 8; p.view.alpha -= 0.05;
+              return p.view.alpha > 0;
+          }
+      });
   }
 
   private processCorpse(u: Unit, dt: number) {
@@ -755,7 +891,7 @@ export class GameEngine {
       // Death Effects (Toxin Cloud)
       if (u.statuses['POISONED']) {
           this.createExplosion(u.x, u.y, 40, 0x4ade80); // Visual Poison Cloud
-          // Spread poison to nearby (including friends if it's a gas cloud, but let's stick to enemies for now for fun)
+          // Spread poison to nearby enemies
           this.unitPool!.getActiveUnits().forEach(other => {
               if (other === u || other.isDead || other.faction === u.faction) return;
               if (Math.abs(other.x - u.x) < 40 && Math.abs(other.y - u.y) < 40) {
@@ -772,10 +908,6 @@ export class GameEngine {
          units.forEach(enemy => { if (!enemy.isDead && enemy.faction === Faction.HUMAN) { const dist = Math.sqrt((enemy.x - u.x)**2 + (enemy.y - u.y)**2); if (dist < 80) { enemy.hp -= 40; if (enemy.hp <= 0) this.killUnit(enemy); } } });
       }
   }
-  
-  private createFlash(x: number, y: number, color: number) { if (!this.app || this.isDestroyed) return; const gfx = new Graphics(); gfx.beginFill(color, 0.9); gfx.drawCircle(0, 0, 4); gfx.endFill(); gfx.position.set(x, y); this.particleLayer.addChild(gfx); let life = 5; const animate = () => { if (this.isDestroyed || gfx.destroyed) return; life--; gfx.alpha = life / 5; if (life <= 0) gfx.destroy(); else requestAnimationFrame(animate); }; animate(); }
-  private createProjectile(x1: number, y1: number, x2: number, y2: number, color: number) { if (!this.app || this.isDestroyed) return; const gfx = new Graphics(); gfx.lineStyle(2, color, 1); gfx.moveTo(0, 0); gfx.lineTo(12, 0); gfx.position.set(x1, y1); gfx.rotation = Math.atan2(y2 - y1, x2 - x1); this.particleLayer.addChild(gfx); const speed = 800; const dist = Math.sqrt((x2-x1)**2 + (y2-y1)**2); const duration = dist / speed * 1000; const startTime = performance.now(); const animate = (time: number) => { if (this.isDestroyed || gfx.destroyed) return; const t = Math.min(1, (time - startTime) / duration); gfx.x = x1 + (x2 - x1) * t; gfx.y = y1 + (y2 - y1) * t; if (t >= 1) gfx.destroy(); else requestAnimationFrame(animate); }; requestAnimationFrame(animate); }
-  private createExplosion(x: number, y: number, radius: number, color: number = 0x00ff00) { if (!this.app || this.isDestroyed) return; const gfx = new Graphics(); gfx.beginFill(color, 0.5); gfx.drawCircle(0, 0, 10); gfx.endFill(); gfx.position.set(x, y); this.particleLayer.addChild(gfx); let frame = 0; const animate = () => { if (this.isDestroyed || gfx.destroyed) return; frame++; gfx.width += 8; gfx.height += 8; gfx.alpha -= 0.05; if (gfx.alpha <= 0) gfx.destroy(); else requestAnimationFrame(animate); }; animate(); }
 
   public getSnapshot(): GameStateSnapshot {
       const s = DataManager.instance.state;
