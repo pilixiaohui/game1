@@ -1,4 +1,5 @@
 
+
 import { GameSaveData, UnitType, UnitRuntimeStats, Resources, GameModifiers, BioPluginConfig, PluginInstance, ElementType } from '../types';
 import { INITIAL_GAME_STATE, UNIT_CONFIGS, UNIT_UPGRADE_COST_BASE, RECYCLE_REFUND_RATE, METABOLISM_FACILITIES, MAX_RESOURCES_BASE, BIO_PLUGINS, CAP_UPGRADE_BASE, EFFICIENCY_UPGRADE_BASE, QUEEN_UPGRADE_BASE, INITIAL_LARVA_CAP } from '../constants';
 
@@ -102,7 +103,7 @@ export class DataManager {
         if (type === 'larva') {
             const max = this.state.hive.production.larvaCapBase;
             if (this.state.resources.larva > max) this.state.resources.larva = max;
-        } else if (type === 'biomass' || type === 'minerals' || type === 'enzymes') {
+        } else if (type === 'biomass' || type === 'enzymes') {
             const cap = this.getMaxResourceCap();
             if (this.state.resources[type] > cap) {
                 this.state.resources[type] = cap;
@@ -145,9 +146,6 @@ export class DataManager {
 
         const totalBiomassGen = (villiProd + taprootProd + geyserProd + breakerProd - breakerLoss) * dt;
         this.modifyResource('biomass', totalBiomassGen);
-
-        const mineralGen = (meta.taprootCount * 0.5 + meta.breakerCount * 5.0 + meta.villiCount * 0.1) * dt; 
-        this.modifyResource('minerals', mineralGen);
 
         if (meta.fermentingSacCount > 0) {
             let costPerEnzyme = 100 - (meta.refluxPumpCount * METABOLISM_FACILITIES.PUMP.COST_REDUCTION);
@@ -238,13 +236,11 @@ export class DataManager {
             const config = UNIT_CONFIGS[unit.id];
             const discount = Math.pow(0.95, unit.efficiencyLevel - 1);
             const bioCost = config.baseCost.biomass * discount;
-            const minCost = config.baseCost.minerals * discount;
             const dnaCost = config.baseCost.dna * discount;
             const larvaCost = config.baseCost.larva;
             const timeCost = config.baseCost.time * discount;
 
             if (resources.biomass >= bioCost && 
-                resources.minerals >= minCost && 
                 resources.dna >= dnaCost &&
                 resources.larva >= larvaCost) {
                 
@@ -252,7 +248,6 @@ export class DataManager {
                 
                 if (unit.productionProgress >= timeCost) {
                     this.modifyResource('biomass', -bioCost);
-                    this.modifyResource('minerals', -minCost);
                     this.modifyResource('dna', -dnaCost);
                     this.modifyResource('larva', -larvaCost);
                     
@@ -328,7 +323,6 @@ export class DataManager {
         
         return {
             bio: config.baseCost.biomass * discount,
-            min: config.baseCost.minerals * discount,
             dna: config.baseCost.dna * discount,
             time: config.baseCost.time * discount,
             capCost: Math.floor(CAP_UPGRADE_BASE * Math.pow(1.5, u.capLevel - 1)),
@@ -351,18 +345,15 @@ export class DataManager {
     public digestStockpile() {
         const stockpile = this.state.hive.unitStockpile;
         let totalRefundBiomass = 0;
-        let totalRefundMinerals = 0;
         for (const type of Object.values(UnitType)) {
             const count = stockpile[type] || 0;
             if (count > 0 && type !== UnitType.QUEEN) {
                 const config = UNIT_CONFIGS[type];
                 totalRefundBiomass += count * config.baseCost.biomass * RECYCLE_REFUND_RATE;
-                totalRefundMinerals += count * config.baseCost.minerals * RECYCLE_REFUND_RATE;
                 stockpile[type] = 0;
             }
         }
         if (totalRefundBiomass > 0) this.modifyResource('biomass', totalRefundBiomass);
-        if (totalRefundMinerals > 0) this.modifyResource('minerals', totalRefundMinerals);
         this.events.emit('STOCKPILE_CHANGED', this.state.hive.unitStockpile);
         this.saveGame();
     }

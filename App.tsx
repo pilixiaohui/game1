@@ -1,5 +1,7 @@
 
 
+
+
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { GameCanvas } from './components/GameCanvas';
 import { HUD } from './components/HUD';
@@ -137,7 +139,6 @@ const App: React.FC = () => {
                   <ResourceItem label="Biomass" value={globalState.resources.biomass} color="text-green-500" />
                   <ResourceItem label="Enzymes" value={globalState.resources.enzymes} color="text-orange-500" />
                   <ResourceItem label="DNA" value={globalState.resources.dna} color="text-blue-400" />
-                  <ResourceItem label="Minerals" value={globalState.resources.minerals} color="text-purple-400" />
               </div>
           </div>
 

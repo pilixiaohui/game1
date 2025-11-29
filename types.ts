@@ -9,6 +9,11 @@ export enum UnitType {
   MELEE = 'MELEE',
   RANGED = 'RANGED',
   QUEEN = 'QUEEN',
+  
+  // --- NEW: Elemental Units ---
+  PYROVORE = 'PYROVORE', // Thermal Artillery
+  CRYOLISK = 'CRYOLISK', // Cryo Assassin
+  OMEGALIS = 'OMEGALIS', // Voltaic Tank
 
   // Human Units
   HUMAN_MARINE = 'HUMAN_MARINE',      // Kinetic / Ballistic
@@ -66,7 +71,6 @@ export interface UnitConfig {
     };
     baseCost: {
         biomass: number;
-        minerals: number;
         larva: number;
         dna: number;
         time: number;
@@ -111,7 +115,6 @@ export interface BioPluginConfig {
 
 export interface Resources {
     biomass: number;
-    minerals: number; 
     enzymes: number; 
     larva: number;    
     dna: number;     

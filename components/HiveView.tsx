@@ -1,5 +1,7 @@
 
 
+
+
 import React, { useState } from 'react';
 import { GameSaveData, UnitType, HiveSection, Polarity } from '../types';
 import { UNIT_CONFIGS, METABOLISM_FACILITIES, BIO_PLUGINS, PLAYABLE_UNITS, MAX_RESOURCES_BASE } from '../constants';
@@ -500,7 +502,6 @@ export const HiveView: React.FC<HiveViewProps> = ({ globalState, onUpgrade, onCo
                                     <h4 className="font-bold text-white">{config.name}</h4>
                                     <div className="text-[10px] text-gray-400 flex gap-2">
                                         <span>Bio: {stats.bio.toFixed(0)}</span>
-                                        <span>Min: {stats.min.toFixed(0)}</span>
                                         <span>Larva: 1</span>
                                         <span>Time: {stats.time.toFixed(1)}s</span>
                                     </div>

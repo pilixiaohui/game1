@@ -1,7 +1,8 @@
 
+
 import { Application, Container, Graphics, TilingSprite, Text, TextStyle } from 'pixi.js';
 import { Faction, GameModifiers, UnitType, GameStateSnapshot, RoguelikeCard, ElementType, StatusType, StatusEffect } from '../types';
-import { UNIT_CONFIGS, LANE_Y, LANE_HEIGHT, DECAY_TIME, MILESTONE_DISTANCE, COLLISION_BUFFER, MAX_SCREEN_UNITS, ELEMENT_COLORS, INITIAL_REGIONS_CONFIG, STATUS_CONFIG } from '../constants';
+import { UNIT_CONFIGS, LANE_Y, LANE_HEIGHT, DECAY_TIME, MILESTONE_DISTANCE, COLLISION_BUFFER, MAX_SCREEN_UNITS, ELEMENT_COLORS, INITIAL_REGIONS_CONFIG, STATUS_CONFIG, STRONGHOLDS, OBSTACLES } from '../constants';
 import { DataManager } from './DataManager';
 
 // --- ECS-lite UNIT CLASS ---
@@ -149,13 +150,45 @@ class UnitPool {
       // Body
       unit.view.beginFill(color);
       if (unit.faction === Faction.ZERG) {
-         unit.view.drawRoundedRect(-width / 2, -height, width, height, 4);
-         unit.view.endFill();
-         // Eye
-         unit.view.beginFill(0xffffff, 0.9);
-         unit.view.drawCircle(5, -height + 8, 3);
-         unit.view.endFill();
+         if (unit.type === UnitType.PYROVORE) {
+             // Bulbous back for artillery
+             unit.view.drawCircle(0, -height/2, width/2);
+             unit.view.endFill();
+             // Eye
+             unit.view.beginFill(0xffffff, 0.9);
+             unit.view.drawCircle(4, -height/2 - 4, 3);
+             unit.view.endFill();
+         } else if (unit.type === UnitType.CRYOLISK) {
+             // Fast, spiky
+             unit.view.moveTo(0, -height);
+             unit.view.lineTo(width/2, 0);
+             unit.view.lineTo(-width/2, 0);
+             unit.view.lineTo(0, -height);
+             unit.view.endFill();
+             // Eye
+             unit.view.beginFill(0xffffff, 0.9);
+             unit.view.drawCircle(0, -height + 10, 2);
+             unit.view.endFill();
+         } else if (unit.type === UnitType.OMEGALIS) {
+             // Big tank
+             unit.view.drawRoundedRect(-width/2, -height, width, height, 8);
+             unit.view.drawRect(-width/2 - 4, -height + 10, width + 8, 10); // Armor plates
+             unit.view.endFill();
+             // Eye
+             unit.view.beginFill(0xffffff, 0.9);
+             unit.view.drawCircle(8, -height + 12, 4);
+             unit.view.endFill();
+         } else {
+             // Default (Melee/Ranged/Queen)
+             unit.view.drawRoundedRect(-width / 2, -height, width, height, 4);
+             unit.view.endFill();
+             // Eye
+             unit.view.beginFill(0xffffff, 0.9);
+             unit.view.drawCircle(5, -height + 8, 3);
+             unit.view.endFill();
+         }
       } else {
+         // Humans
          if (unit.type === UnitType.HUMAN_RIOT) {
              unit.view.drawRect(-width/2, -height, width, height);
              unit.view.endFill();
@@ -243,6 +276,11 @@ export class GameEngine {
   private isDestroyed: boolean = false;
   public isStockpileMode: boolean = false;
 
+  // --- NEW: BATTLEFIELD CONTROL PROPERTIES ---
+  private currentStrongholdIndex: number = 0; // Tracks which stronghold we are currently sieging
+  private cameraLocked: boolean = false;      // If true, camera holds position for siege
+  // ------------------------------------------
+
   constructor() {
     this.world = new Container();
     this.unitLayer = new Container();
@@ -273,6 +311,25 @@ export class GameEngine {
     this.world.position.set(0, this.app.screen.height / 2);
     this.world.sortableChildren = true;
     this.app.stage.addChild(this.world);
+    
+    // --- DEBUG: DRAW TERRAIN OBSTACLES & STRONGHOLDS ---
+    const debugGfx = new Graphics();
+    
+    // Draw Obstacles (Gray outlines)
+    debugGfx.lineStyle(2, 0x444444);
+    OBSTACLES.forEach(obs => {
+        debugGfx.drawCircle(obs.x, LANE_Y + obs.y, obs.radius);
+    });
+
+    // Draw Strongholds (Red defense lines)
+    debugGfx.lineStyle(2, 0xff0000, 0.5);
+    STRONGHOLDS.forEach(x => {
+        debugGfx.moveTo(x, LANE_Y - 200);
+        debugGfx.lineTo(x, LANE_Y + 200);
+    });
+    this.world.addChild(debugGfx);
+    // ---------------------------------------------------
+
     this.unitLayer.sortableChildren = true;
     this.world.addChild(this.unitLayer);
     this.world.addChild(this.particleLayer);
@@ -284,6 +341,8 @@ export class GameEngine {
       this.isStockpileMode = enabled;
       if (enabled) {
           this.cameraX = 0;
+          this.currentStrongholdIndex = 0;
+          this.cameraLocked = false;
           if (this.world) this.world.position.x = 0;
           this.unitPool?.getActiveUnits().forEach(u => { if (u.faction === Faction.HUMAN) this.unitPool?.recycle(u); });
           this.clearParticles();
@@ -314,6 +373,7 @@ export class GameEngine {
     zergUnits.sort((a, b) => a.x - b.x); 
 
     if (!this.isStockpileMode) {
+        // 1. Calculate Frontline (Existing Logic)
         let frontX = 0;
         if (zergUnits.length > 0) {
             const leaders = zergUnits.slice(-3); 
@@ -321,10 +381,39 @@ export class GameEngine {
         } else {
             frontX = this.cameraX + 200; 
         }
-        const desiredOffset = this.app.screen.width * 0.6; 
-        const goalX = Math.max(0, frontX - desiredOffset);
+
+        // 2. --- NEW: SIEGE CAMERA LOGIC ---
+        const nextStrongholdX = STRONGHOLDS[this.currentStrongholdIndex];
+        let targetCamX = frontX - this.app.screen.width * 0.6; // Default follow
+        
+        // If there is a stronghold ahead
+        if (nextStrongholdX !== undefined) {
+             const lockTriggerX = nextStrongholdX - 100;
+             const lockCamX = nextStrongholdX - this.app.screen.width * 0.8; // Position camera to show the defense line
+             
+             // Check if we reached the stronghold and if it is still defended
+             if (frontX >= lockTriggerX && !this.isStrongholdCleared(nextStrongholdX)) {
+                 this.cameraLocked = true;
+                 targetCamX = lockCamX; // Override target
+             } else {
+                 // Stronghold cleared or not reached
+                 if (this.cameraLocked) {
+                     this.cameraLocked = false; // Release lock
+                     this.currentStrongholdIndex++; // Advance to next stronghold
+                 }
+             }
+        }
+        // ---------------------------------
+
+        // 3. Smooth Camera Movement
+        const goalX = Math.max(0, targetCamX);
         const camDiff = goalX - this.cameraX;
-        this.cameraX += camDiff * (camDiff > 0 ? 0.05 : 0.02);
+        // Snap harder if locked to emphasize the "stop", smooth otherwise
+        const lerpFactor = this.cameraLocked ? 0.1 : (camDiff > 0 ? 0.05 : 0.02);
+        
+        this.cameraX += camDiff * lerpFactor;
+        
+        // Update Containers
         this.world.position.x = -this.cameraX; 
         if (this.bgLayer) this.bgLayer.tilePosition.x = -this.cameraX * 0.1;
         if (this.groundLayer) this.groundLayer.tilePosition.x = -this.cameraX;
@@ -361,6 +450,19 @@ export class GameEngine {
     if (this.unitPool && !this.isStockpileMode) {
         allUnits.forEach(u => { if (u.x < this.cameraX - 200) this.unitPool!.recycle(u); });
     }
+  }
+
+  // Check if enemies near the stronghold are dead
+  private isStrongholdCleared(strongholdX: number): boolean {
+      if (!this.unitPool) return true;
+      const range = 300;
+      // Filter for alive human units near the stronghold x
+      const defenders = this.unitPool.getActiveUnits().filter(u => 
+          u.faction === Faction.HUMAN && 
+          !u.isDead && 
+          Math.abs(u.x - strongholdX) < range
+      );
+      return defenders.length === 0;
   }
 
   // --- NEW STATUS MANAGER SYSTEM ---
@@ -571,7 +673,7 @@ export class GameEngine {
       const targetVisualCount = Math.min(VISUAL_CAP, totalStored);
 
       if (currentVisualCount < targetVisualCount) {
-          const availableTypes = [UnitType.MELEE, UnitType.RANGED]; 
+          const availableTypes = [UnitType.MELEE, UnitType.RANGED, UnitType.PYROVORE, UnitType.CRYOLISK, UnitType.OMEGALIS]; 
           const type = availableTypes[Math.floor(Math.random() * availableTypes.length)];
           const spawnX = Math.random() * this.app!.screen.width;
           const u = this.unitPool!.spawn(Faction.ZERG, type, spawnX, this.modifiers);
@@ -647,17 +749,68 @@ export class GameEngine {
      else { u.state = 'IDLE'; if (u.target && nearestDist <= u.range) u.state = 'ATTACK'; }
 
      if (u.state === 'MOVE' || u.state === 'IDLE') {
-        const direction = u.faction === Faction.ZERG ? 1 : -1; let dxMove = 0; let dyMove = 0;
+        const direction = u.faction === Faction.ZERG ? 1 : -1; 
+        let dxMove = 0; 
+        let dyMove = 0;
+        
         if (u.faction === Faction.ZERG && u.state === 'MOVE') dxMove += u.speed * dt * direction;
+
+        // --- NEW: BOIDS SEPARATION (Fluid Physics) ---
         for (const friend of friends) {
             if (friend === u) continue;
-            if (u.faction === Faction.ZERG && friend.faction === Faction.ZERG) continue;
-            if (Math.abs(friend.x - u.x) > 40) continue; 
-            const fDx = u.x - friend.x; const fDy = u.y - friend.y; const distSq = fDx*fDx + fDy*fDy; const minSep = u.radius + friend.radius;
-            if (distSq < minSep * minSep && distSq > 0.001) { const dist = Math.sqrt(distSq); const pushStr = (minSep - dist) / minSep; dxMove += (fDx / dist) * pushStr * 200 * dt; dyMove += (fDy / dist) * pushStr * 200 * dt; }
+            // Simple distance check optimization
+            if (Math.abs(friend.x - u.x) > 30) continue; 
+
+            const distSq = (u.x - friend.x)**2 + (u.y - friend.y)**2;
+            const repelRadius = u.radius + friend.radius + 2; 
+            
+            if (distSq < repelRadius * repelRadius && distSq > 0.001) {
+                const dist = Math.sqrt(distSq);
+                const force = (repelRadius - dist) / repelRadius; 
+                
+                // Stronger Y-push for lateral expansion (fluidity)
+                const pushX = (u.x - friend.x) / dist * force * 100 * dt;
+                const pushY = (u.y - friend.y) / dist * force * 300 * dt; 
+
+                dxMove += pushX;
+                dyMove += pushY;
+            }
         }
-        u.x += dxMove; u.y += dyMove;
-        if (u.y < LANE_Y - LANE_HEIGHT/2) u.y = LANE_Y - LANE_HEIGHT/2; if (u.y > LANE_Y + LANE_HEIGHT/2) u.y = LANE_Y + LANE_HEIGHT/2;
+        // ---------------------------------------------
+
+        u.x += dxMove; 
+        u.y += dyMove;
+
+        // --- NEW: OBSTACLE COLLISION ---
+        for (const obs of OBSTACLES) {
+            // Note: Obstacles are defined relative to LANE_Y in constants
+            const obsY = LANE_Y + obs.y;
+            const dx = u.x - obs.x;
+            const dy = u.y - obsY;
+            const distSq = dx*dx + dy*dy;
+            const minSep = u.radius + obs.radius;
+
+            if (distSq < minSep * minSep) {
+                const dist = Math.sqrt(distSq);
+                const nx = dx / dist;
+                const ny = dy / dist;
+                const penetration = minSep - dist;
+                
+                // Push out
+                u.x += nx * penetration;
+                u.y += ny * penetration;
+                
+                // Slide tangential (Flow around)
+                u.y += (ny > 0 ? 1 : -1) * 200 * dt; 
+            }
+        }
+        // -------------------------------
+
+        // Boundaries
+        if (u.y < LANE_Y - LANE_HEIGHT/2) u.y = LANE_Y - LANE_HEIGHT/2; 
+        if (u.y > LANE_Y + LANE_HEIGHT/2) u.y = LANE_Y + LANE_HEIGHT/2;
+        
+        // Bobbing animation
         if (u.view && Math.abs(dxMove) > 0.5) u.view.y = u.y + Math.sin(u.x * 0.15) * 2; else if (u.view) u.view.y = u.y;
      } else if (u.state === 'ATTACK') {
         u.attackCooldown -= dt; 
@@ -725,7 +878,7 @@ export class GameEngine {
      if (source.view) source.view.x += (source.faction === Faction.ZERG ? -1 : 1) * 4; 
      const color = ELEMENT_COLORS[source.element];
      
-     const isRanged = source.type === UnitType.RANGED || source.type === UnitType.HUMAN_MARINE || source.type === UnitType.HUMAN_SNIPER || source.type === UnitType.HUMAN_TANK || source.type === UnitType.HUMAN_PYRO;
+     const isRanged = source.type === UnitType.RANGED || source.type === UnitType.PYROVORE || source.type === UnitType.HUMAN_MARINE || source.type === UnitType.HUMAN_SNIPER || source.type === UnitType.HUMAN_TANK || source.type === UnitType.HUMAN_PYRO;
      
      if (isRanged) { 
          // For Pyro, use a "beam" or "cloud" visual ideally, but projectile works for prototype
@@ -881,9 +1034,9 @@ export class GameEngine {
   private killUnit(u: Unit) {
       u.isDead = true; u.state = 'DEAD'; u.decayTimer = DECAY_TIME;
       if (u.faction === Faction.HUMAN) {
-          let bioReward = 10; let minReward = 2;
-          if (u.type === UnitType.HUMAN_RIOT) { bioReward = 15; minReward = 5; } else if (u.type === UnitType.HUMAN_TANK) { bioReward = 50; minReward = 30; }
-          DataManager.instance.modifyResource('biomass', bioReward); DataManager.instance.modifyResource('minerals', minReward); 
+          let bioReward = 10;
+          if (u.type === UnitType.HUMAN_RIOT) { bioReward = 15; } else if (u.type === UnitType.HUMAN_TANK) { bioReward = 50; }
+          DataManager.instance.modifyResource('biomass', bioReward);
       } else {
           const recycleRate = DataManager.instance.getRecycleRate(); const recycleValue = 5; DataManager.instance.modifyResource('biomass', recycleValue * recycleRate);
       }

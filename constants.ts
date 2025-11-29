@@ -1,4 +1,5 @@
 
+
 import { UnitType, UnitConfig, RegionData, GameSaveData, Faction, BioPluginConfig, Polarity, ElementType } from './types';
 
 export const SCREEN_PADDING = 100;
@@ -13,7 +14,6 @@ export const MILESTONE_DISTANCE = 1500;
 export const MAX_RESOURCES_BASE = 2000000; 
 export const INITIAL_LARVA_CAP = 1000;
 export const RESOURCE_TICK_RATE_BASE = 15; 
-export const MINERAL_TICK_RATE_BASE = 5;   
 export const UNIT_UPGRADE_COST_BASE = 100;
 export const MAX_SCREEN_UNITS = 60; // Increased for swarm feel
 export const RECYCLE_REFUND_RATE = 0.8; 
@@ -37,6 +37,26 @@ export const STATUS_CONFIG = {
     REACTION_THRESHOLD_MINOR: 50, // e.g. Thermal Shock requirement
     REACTION_THRESHOLD_MAJOR: 80, // e.g. Shatter requirement
 };
+
+// --- BATTLEFIELD CONFIGURATION ---
+
+// 1. Strongholds (Defense Lines)
+// The camera will lock here until enemies in range are cleared.
+export const STRONGHOLDS = [
+    400,   // First Outpost
+    900,   // Midpoint Intercept
+    1400,  // Final Defense
+];
+
+// 2. Terrain Obstacles
+// Swarm units must flow around these, creating split streams.
+export const OBSTACLES = [
+    // x: position, y: offset from center (0), radius: size
+    { x: 250, y: 0, radius: 35 },     // Center block, forces split
+    { x: 600, y: -40, radius: 30 },   // Top block
+    { x: 600, y: 40, radius: 30 },    // Bottom block, forming a choke
+    { x: 1100, y: 0, radius: 50 },    // Large ruin
+];
 
 // METABOLISM FACILITIES
 export const METABOLISM_FACILITIES = {
@@ -160,7 +180,14 @@ export const METABOLISM_FACILITIES = {
 
 // --- CONFIG TABLES ---
 
-export const PLAYABLE_UNITS = [UnitType.MELEE, UnitType.RANGED, UnitType.QUEEN];
+export const PLAYABLE_UNITS = [
+    UnitType.MELEE, 
+    UnitType.RANGED, 
+    UnitType.CRYOLISK,
+    UnitType.PYROVORE,
+    UnitType.OMEGALIS,
+    UnitType.QUEEN
+];
 
 export const UNIT_CONFIGS: Record<UnitType, UnitConfig> = {
   [UnitType.MELEE]: {
@@ -177,7 +204,7 @@ export const UNIT_CONFIGS: Record<UnitType, UnitConfig> = {
         color: 0x3b82f6,
         armor: 0
     },
-    baseCost: { biomass: 15, minerals: 5, larva: 1, dna: 0, time: 2.0 },
+    baseCost: { biomass: 15, larva: 1, dna: 0, time: 2.0 },
     growthFactors: { hp: 0.2, damage: 0.2 },
     baseLoadCapacity: 30,
     slots: [{ polarity: 'ATTACK' }, { polarity: 'DEFENSE' }, { polarity: 'ATTACK' }, { polarity: 'FUNCTION' }, { polarity: 'UNIVERSAL' }],
@@ -197,11 +224,71 @@ export const UNIT_CONFIGS: Record<UnitType, UnitConfig> = {
         color: 0x8b5cf6,
         armor: 5
     },
-    baseCost: { biomass: 25, minerals: 15, larva: 1, dna: 0, time: 4.0 },
+    baseCost: { biomass: 25, larva: 1, dna: 0, time: 4.0 },
     growthFactors: { hp: 0.15, damage: 0.25 },
     baseLoadCapacity: 30,
     slots: [{ polarity: 'ATTACK' }, { polarity: 'DEFENSE' }, { polarity: 'FUNCTION' }, { polarity: 'FUNCTION' }, { polarity: 'UNIVERSAL' }],
     elementConfig: { type: 'TOXIN', statusPerHit: 10 }
+  },
+  [UnitType.PYROVORE]: {
+    id: UnitType.PYROVORE,
+    name: '爆裂虫 (Pyrovore)',
+    baseStats: {
+        hp: 120,
+        damage: 45,
+        range: 280,
+        speed: 90,
+        attackSpeed: 0.8,
+        width: 28,
+        height: 28,
+        color: 0xf87171, // Red
+        armor: 5
+    },
+    baseCost: { biomass: 60, larva: 1, dna: 0, time: 5.0 },
+    growthFactors: { hp: 0.15, damage: 0.3 },
+    baseLoadCapacity: 40,
+    slots: [{ polarity: 'ATTACK' }, { polarity: 'ATTACK' }, { polarity: 'FUNCTION' }],
+    elementConfig: { type: 'THERMAL', statusPerHit: 20 }
+  },
+  [UnitType.CRYOLISK]: {
+    id: UnitType.CRYOLISK,
+    name: '冰牙兽 (Cryolisk)',
+    baseStats: {
+        hp: 180,
+        damage: 12,
+        range: 40,
+        speed: 220,
+        attackSpeed: 2.5,
+        width: 22,
+        height: 22,
+        color: 0x60a5fa, // Blue
+        armor: 10
+    },
+    baseCost: { biomass: 40, larva: 1, dna: 0, time: 3.0 },
+    growthFactors: { hp: 0.2, damage: 0.1 },
+    baseLoadCapacity: 35,
+    slots: [{ polarity: 'FUNCTION' }, { polarity: 'FUNCTION' }, { polarity: 'DEFENSE' }],
+    elementConfig: { type: 'CRYO', statusPerHit: 8 }
+  },
+  [UnitType.OMEGALIS]: {
+    id: UnitType.OMEGALIS,
+    name: '雷兽 (Omegalis)',
+    baseStats: {
+        hp: 800,
+        damage: 30,
+        range: 50,
+        speed: 70,
+        attackSpeed: 0.6,
+        width: 45,
+        height: 45,
+        color: 0xfacc15, // Yellow
+        armor: 60
+    },
+    baseCost: { biomass: 300, larva: 2, dna: 20, time: 15.0 },
+    growthFactors: { hp: 0.4, damage: 0.1 },
+    baseLoadCapacity: 80,
+    slots: [{ polarity: 'DEFENSE' }, { polarity: 'DEFENSE' }, { polarity: 'UNIVERSAL' }, { polarity: 'UNIVERSAL' }],
+    elementConfig: { type: 'VOLTAIC', statusPerHit: 25 }
   },
   [UnitType.QUEEN]: {
     id: UnitType.QUEEN,
@@ -217,7 +304,7 @@ export const UNIT_CONFIGS: Record<UnitType, UnitConfig> = {
         color: 0xd946ef, 
         armor: 20
     },
-    baseCost: { biomass: 150, minerals: 50, larva: 1, dna: 5, time: 10.0 },
+    baseCost: { biomass: 150, larva: 1, dna: 5, time: 10.0 },
     growthFactors: { hp: 0.1, damage: 0.1 },
     baseLoadCapacity: 50,
     slots: [{ polarity: 'UNIVERSAL' }, { polarity: 'FUNCTION' }, { polarity: 'DEFENSE' }]
@@ -378,7 +465,7 @@ export const INITIAL_REGIONS_CONFIG: RegionData[] = [
 ];
 
 export const INITIAL_GAME_STATE: GameSaveData = {
-    resources: { biomass: 50, minerals: 0, enzymes: 0, larva: 1000, dna: 0, mutagen: 0 },
+    resources: { biomass: 50, enzymes: 0, larva: 1000, dna: 0, mutagen: 0 },
     hive: {
         unlockedUnits: {
             [UnitType.MELEE]: { 
@@ -388,6 +475,18 @@ export const INITIAL_GAME_STATE: GameSaveData = {
             [UnitType.RANGED]: { 
                 id: UnitType.RANGED, level: 1, loadout: [null, null, null, null, null],
                 cap: 50, capLevel: 1, efficiencyLevel: 1, isProducing: false, productionProgress: 0
+            },
+            [UnitType.PYROVORE]: { 
+                id: UnitType.PYROVORE, level: 1, loadout: [null, null, null],
+                cap: 20, capLevel: 1, efficiencyLevel: 1, isProducing: false, productionProgress: 0
+            },
+            [UnitType.CRYOLISK]: { 
+                id: UnitType.CRYOLISK, level: 1, loadout: [null, null, null],
+                cap: 30, capLevel: 1, efficiencyLevel: 1, isProducing: false, productionProgress: 0
+            },
+            [UnitType.OMEGALIS]: { 
+                id: UnitType.OMEGALIS, level: 1, loadout: [null, null, null, null],
+                cap: 5, capLevel: 1, efficiencyLevel: 1, isProducing: false, productionProgress: 0
             },
             [UnitType.QUEEN]: { 
                 id: UnitType.QUEEN, level: 1, loadout: [null, null, null],
@@ -403,6 +502,9 @@ export const INITIAL_GAME_STATE: GameSaveData = {
         unitStockpile: {
             [UnitType.MELEE]: 10, 
             [UnitType.RANGED]: 0,
+            [UnitType.PYROVORE]: 0,
+            [UnitType.CRYOLISK]: 0,
+            [UnitType.OMEGALIS]: 0,
             [UnitType.QUEEN]: 1, 
             [UnitType.HUMAN_MARINE]: 0,
             [UnitType.HUMAN_RIOT]: 0,
