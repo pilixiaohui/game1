@@ -8,18 +8,18 @@ export enum UnitType {
   // Zerg Units
   MELEE = 'MELEE',
   RANGED = 'RANGED',
-  QUEEN = 'QUEEN', // The actual unit that can fight
+  QUEEN = 'QUEEN',
 
   // Human Units
-  HUMAN_MARINE = 'HUMAN_MARINE',      // 标准步枪兵
-  HUMAN_RIOT = 'HUMAN_RIOT',          // 防暴盾卫 (高防)
-  HUMAN_PYRO = 'HUMAN_PYRO',          // 火焰兵 (近距离高伤)
-  HUMAN_SNIPER = 'HUMAN_SNIPER',      // 狙击手 (超远距离)
-  HUMAN_TANK = 'HUMAN_TANK',          // 步行机甲 (Boss级)
+  HUMAN_MARINE = 'HUMAN_MARINE',      // Kinetic / Ballistic
+  HUMAN_RIOT = 'HUMAN_RIOT',          // Kinetic / High Armor
+  HUMAN_PYRO = 'HUMAN_PYRO',          // Thermal
+  HUMAN_SNIPER = 'HUMAN_SNIPER',      // Kinetic / High Crit
+  HUMAN_TANK = 'HUMAN_TANK',          // Voltaic / Heavy
 }
 
 export enum HiveSection {
-  EVOLUTION = 'EVOLUTION', // Formerly HYPERTROPHY
+  EVOLUTION = 'EVOLUTION',
   GRAFTING = 'GRAFTING',
   SEQUENCE = 'SEQUENCE',
   METABOLISM = 'METABOLISM',
@@ -28,7 +28,24 @@ export enum HiveSection {
   PLAGUE = 'PLAGUE',
 }
 
-// --- CONFIG DATA (Static) ---
+// --- CORE ELEMENTAL SYSTEM (White Paper v1.3) ---
+
+export type ElementType = 'PHYSICAL' | 'THERMAL' | 'CRYO' | 'VOLTAIC' | 'TOXIN';
+
+export type StatusType = 
+    | 'BURNING'      // Thermal DoT
+    | 'FROZEN'       // Cryo Slow/Stop
+    | 'SHOCKED'      // Voltaic Stun
+    | 'POISONED'     // Toxin DoT
+    | 'ARMOR_BROKEN' // Defense reduced
+    | 'STUNNED';     // General inability to act
+
+export interface StatusEffect {
+    type: StatusType;
+    stacks: number;      // 0 to 100 (Threshold)
+    duration: number;    // Time remaining in seconds
+    sourceId?: number;   // ID of the unit that applied it
+}
 
 export type Polarity = 'ATTACK' | 'DEFENSE' | 'FUNCTION' | 'UNIVERSAL';
 
@@ -44,30 +61,36 @@ export interface UnitConfig {
         width: number;
         height: number;
         color: number;
+        armor: number; // New: Physical damage reduction
     };
     baseCost: {
         biomass: number;
         minerals: number;
         larva: number;
         dna: number;
-        time: number; // Seconds to produce
+        time: number;
     };
     growthFactors: {
         hp: number;
         damage: number;
     };
-    // Grafting Slots Configuration
     slots: {
         polarity: Polarity;
     }[];
     baseLoadCapacity: number;
+    
+    // Elemental Configuration
+    elementConfig?: {
+        type: ElementType;
+        statusPerHit?: number; // How many stacks applied per hit
+    };
 }
 
 export interface PluginStatModifier {
     stat: 'hp' | 'damage' | 'speed' | 'attackSpeed' | 'critChance' | 'critDamage' | 'elementalDmg';
     value: number; 
     isFlat?: boolean; 
-    element?: 'PHYSICAL' | 'TOXIN' | 'FIRE' | 'ICE' | 'ELECTRIC';
+    element?: ElementType;
 }
 
 export interface BioPluginConfig {
@@ -86,11 +109,11 @@ export interface BioPluginConfig {
 // --- SAVE DATA (Dynamic) ---
 
 export interface Resources {
-    biomass: number; // Organic Sludge
+    biomass: number;
     minerals: number; 
-    enzymes: number; // New: Energy Layer
+    enzymes: number; 
     larva: number;    
-    dna: number;     // Helix Sequence
+    dna: number;     
     mutagen: number;
 }
 
@@ -103,63 +126,41 @@ export interface PluginInstance {
 export interface UnitState {
     id: UnitType;
     level: number;
-    // Array of instanceIds. Null means empty slot.
     loadout: (string | null)[];
-    
-    // PRODUCTION STATE
-    cap: number;          // Current max limit for this unit
-    capLevel: number;     // Level of Cap Upgrade
-    efficiencyLevel: number; // Level of Cost Reduction
-    isProducing: boolean; // Toggle switch
-    productionProgress: number; // 0 to 1
+    cap: number;
+    capLevel: number;
+    efficiencyLevel: number;
+    isProducing: boolean;
+    productionProgress: number;
 }
 
 export interface HiveState {
     unlockedUnits: Record<UnitType, UnitState>; 
-    
-    // The Reservoir Model Data
-    unitStockpile: Record<UnitType, number>; // Ready-to-deploy units
-    
+    unitStockpile: Record<UnitType, number>;
     production: {
         larvaCapBase: number;      
-        
-        // Queen Logic
-        queenIntervalLevel: number; // Reduces time between larva spawns
-        queenAmountLevel: number;   // Increases larva per spawn
-        queenTimer: number;         // Runtime timer
+        queenIntervalLevel: number;
+        queenAmountLevel: number; 
+        queenTimer: number;
     };
-    
-    // New Metabolism Structure (v1.3 Design)
     metabolism: {
-        // TIER 1: MATTER
         villiCount: number;
         taprootCount: number;
         geyserCount: number;
         breakerCount: number;
-
-        // TIER 2: ENERGY
         fermentingSacCount: number;
         refluxPumpCount: number;
         thermalCrackerCount: number;
-        fleshBoilerCount: number; // New
-        
-        // Cracker Runtime State
-        crackerHeat: number; // 0 to 100
+        fleshBoilerCount: number;
+        crackerHeat: number; 
         crackerOverheated: boolean;
-
-        // TIER 3: DATA
         thoughtSpireCount: number;
         hiveMindCount: number;
-        akashicRecorderCount: number; // New
-        
-        // Accumulators for discrete drops
+        akashicRecorderCount: number;
         spireAccumulator: number;
-
-        // Infrastructure
         storageCount: number;
         supplyCount: number;
     };
-
     inventory: {
         consumables: Record<string, number>;
         plugins: PluginInstance[];
@@ -206,10 +207,11 @@ export interface UnitRuntimeStats {
     width: number;
     height: number;
     color: number;
+    armor: number; // Added
     
     critChance: number;
     critDamage: number;
-    element: 'PHYSICAL' | 'TOXIN' | 'FIRE' | 'ICE' | 'ELECTRIC';
+    element: ElementType;
 }
 
 export interface RoguelikeCard {
@@ -237,7 +239,7 @@ export interface GameStateSnapshot {
     stockpileMelee: number;
     stockpileRanged: number;
     stockpileTotal: number;
-    populationCap: number; // Calculated dynamically
+    populationCap: number; 
     
     isPaused: boolean;
 }

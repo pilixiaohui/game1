@@ -1,6 +1,5 @@
 
-
-import { UnitType, UnitConfig, RegionData, GameSaveData, Faction, BioPluginConfig, Polarity } from './types';
+import { UnitType, UnitConfig, RegionData, GameSaveData, Faction, BioPluginConfig, Polarity, ElementType } from './types';
 
 export const SCREEN_PADDING = 100;
 export const LANE_Y = 0; 
@@ -16,7 +15,7 @@ export const INITIAL_LARVA_CAP = 1000;
 export const RESOURCE_TICK_RATE_BASE = 15; 
 export const MINERAL_TICK_RATE_BASE = 5;   
 export const UNIT_UPGRADE_COST_BASE = 100;
-export const MAX_SCREEN_UNITS = 30; 
+export const MAX_SCREEN_UNITS = 50; // Increased for swarm feel
 export const RECYCLE_REFUND_RATE = 0.8; 
 
 // UPGRADE COSTS
@@ -24,7 +23,18 @@ export const CAP_UPGRADE_BASE = 50;
 export const EFFICIENCY_UPGRADE_BASE = 100;
 export const QUEEN_UPGRADE_BASE = 200;
 
-// METABOLISM FACILITIES (v1.3 Design)
+// --- STATUS CONSTANTS ---
+export const STATUS_CONFIG = {
+    MAX_STACKS: 100,
+    DECAY_RATE: 15, // Stacks lost per second
+    THRESHOLD_BURNING: 100,
+    THRESHOLD_FROZEN: 100,
+    THRESHOLD_SHOCK: 50,
+    DOT_INTERVAL: 0.5, // Seconds between DoT ticks
+    ARMOR_BREAK_DURATION: 999, // Effectively permanent until death
+};
+
+// METABOLISM FACILITIES
 export const METABOLISM_FACILITIES = {
     // TIER 1: MATTER (Organic Sludge/Biomass)
     VILLI: {
@@ -58,24 +68,23 @@ export const METABOLISM_FACILITIES = {
         BASE_COST: 150000,
         GROWTH: 1.15,
         BASE_RATE: 650.0,
-        LOSS_RATE: 0.0005, // 0.05%
+        LOSS_RATE: 0.0005, 
         COST_RESOURCE: 'biomass'
     },
-
     // TIER 2: ENERGY (Enzymes)
     SAC: {
         NAME: "发酵囊 (Fermentation Sac)",
         DESC: "时间墙：转化原浆为活性酶。受吞吐量限制。",
-        BASE_COST: 10000, // Biomass cost
+        BASE_COST: 10000, 
         GROWTH: 1.15,
-        INPUT: 100, // Max Biomass Input per sec
-        OUTPUT: 1,  // Enzyme Output per sec (Base 1% efficiency)
+        INPUT: 100, 
+        OUTPUT: 1,  
         COST_RESOURCE: 'biomass'
     },
     PUMP: {
         NAME: "回流泵 (Reflux Pump)",
         DESC: "解决饥荒：每级降低发酵囊 2 原浆消耗。",
-        BASE_COST: 2500, // Enzyme Cost
+        BASE_COST: 2500, 
         GROWTH: 1.15,
         COST_REDUCTION: 2,
         MIN_COST: 50,
@@ -84,50 +93,48 @@ export const METABOLISM_FACILITIES = {
     CRACKER: {
         NAME: "热能裂解堆 (Thermal Cracker)",
         DESC: "过热熔毁：500 Bio -> 15 Enz。产生热量。",
-        BASE_COST: 25000, // Enzyme Cost
+        BASE_COST: 25000, 
         GROWTH: 1.20,
         INPUT: 500,
         OUTPUT: 15,
-        HEAT_GEN: 5, // Heat per sec
-        COOL_RATE: 10, // Cooling per sec when off
+        HEAT_GEN: 5, 
+        COOL_RATE: 10, 
         COST_RESOURCE: 'enzymes'
     },
     BOILER: {
         NAME: "血肉锅炉 (Flesh Boiler)",
         DESC: "后期循环：消耗 1 幼虫 -> 500 酶。",
-        BASE_COST: 100000, // Enzyme Cost
+        BASE_COST: 100000, 
         GROWTH: 1.25,
         INPUT_LARVA: 1,
         OUTPUT_ENZ: 500,
         COST_RESOURCE: 'enzymes'
     },
-
     // TIER 3: DATA (DNA/Helix)
     SPIRE: {
         NAME: "神经尖塔 (Neural Spire)",
         DESC: "离散掉落：极慢速解析基因序列。",
-        BASE_COST: 5000, // Enzyme Cost
+        BASE_COST: 5000, 
         GROWTH: 1.25,
-        BASE_RATE: 0.005, // 200s for 1 DNA
+        BASE_RATE: 0.005, 
         COST_RESOURCE: 'enzymes'
     },
     HIVE_MIND: {
         NAME: "虫群意识网 (Hive Mind)",
         DESC: "人口红利：基于总兵力计算。产出 = √总兵力",
-        BASE_COST: 50000, // Enzyme Cost
+        BASE_COST: 50000, 
         GROWTH: 1.30,
         COST_RESOURCE: 'enzymes'
     },
     RECORDER: {
         NAME: "阿卡西记录 (Akashic Recorder)",
         DESC: "量子观测：尖塔产出时，15% 概率获得当前总量 1%。",
-        BASE_COST: 250000,
+        BASE_COST: 250000, 
         GROWTH: 1.50,
         CHANCE: 0.15,
         PERCENT: 0.01,
         COST_RESOURCE: 'enzymes'
     },
-
     // INFRA
     STORAGE: {
         NAME: "能量泵 (Storage)",
@@ -154,61 +161,47 @@ export const PLAYABLE_UNITS = [UnitType.MELEE, UnitType.RANGED, UnitType.QUEEN];
 export const UNIT_CONFIGS: Record<UnitType, UnitConfig> = {
   [UnitType.MELEE]: {
     id: UnitType.MELEE,
-    name: '跳虫',
+    name: '跳虫 (Zergling)',
     baseStats: {
         hp: 60,
-        damage: 20,
+        damage: 15,
         range: 30,
         speed: 180,
-        attackSpeed: 0.5,
+        attackSpeed: 0.4,
         width: 24,
         height: 24,
         color: 0x3b82f6,
+        armor: 0
     },
     baseCost: { biomass: 15, minerals: 5, larva: 1, dna: 0, time: 2.0 },
-    growthFactors: {
-        hp: 0.2, 
-        damage: 0.2,
-    },
+    growthFactors: { hp: 0.2, damage: 0.2 },
     baseLoadCapacity: 30,
-    slots: [
-        { polarity: 'ATTACK' }, 
-        { polarity: 'DEFENSE' },
-        { polarity: 'ATTACK' }, 
-        { polarity: 'FUNCTION' }, 
-        { polarity: 'UNIVERSAL' }, 
-    ]
+    slots: [{ polarity: 'ATTACK' }, { polarity: 'DEFENSE' }, { polarity: 'ATTACK' }, { polarity: 'FUNCTION' }, { polarity: 'UNIVERSAL' }],
+    elementConfig: { type: 'PHYSICAL' }
   },
   [UnitType.RANGED]: {
     id: UnitType.RANGED,
-    name: '刺蛇',
+    name: '刺蛇 (Hydralisk)',
     baseStats: {
         hp: 45,
-        damage: 35,
+        damage: 30,
         range: 220,
         speed: 130,
         attackSpeed: 1.0,
         width: 20,
         height: 30,
         color: 0x8b5cf6,
+        armor: 5
     },
     baseCost: { biomass: 25, minerals: 15, larva: 1, dna: 0, time: 4.0 },
-    growthFactors: {
-        hp: 0.15,
-        damage: 0.25,
-    },
+    growthFactors: { hp: 0.15, damage: 0.25 },
     baseLoadCapacity: 30,
-    slots: [
-        { polarity: 'ATTACK' }, 
-        { polarity: 'DEFENSE' },
-        { polarity: 'FUNCTION' }, 
-        { polarity: 'FUNCTION' }, 
-        { polarity: 'UNIVERSAL' }, 
-    ]
+    slots: [{ polarity: 'ATTACK' }, { polarity: 'DEFENSE' }, { polarity: 'FUNCTION' }, { polarity: 'FUNCTION' }, { polarity: 'UNIVERSAL' }],
+    elementConfig: { type: 'TOXIN', statusPerHit: 10 }
   },
   [UnitType.QUEEN]: {
     id: UnitType.QUEEN,
-    name: '虫后',
+    name: '虫后 (Queen)',
     baseStats: {
         hp: 300,
         damage: 10,
@@ -218,28 +211,51 @@ export const UNIT_CONFIGS: Record<UnitType, UnitConfig> = {
         width: 32,
         height: 48,
         color: 0xd946ef, 
+        armor: 20
     },
     baseCost: { biomass: 150, minerals: 50, larva: 1, dna: 5, time: 10.0 },
-    growthFactors: {
-        hp: 0.1,
-        damage: 0.1,
-    },
+    growthFactors: { hp: 0.1, damage: 0.1 },
     baseLoadCapacity: 50,
-    slots: [
-        { polarity: 'UNIVERSAL' }, 
-        { polarity: 'FUNCTION' }, 
-        { polarity: 'DEFENSE' }, 
-    ]
+    slots: [{ polarity: 'UNIVERSAL' }, { polarity: 'FUNCTION' }, { polarity: 'DEFENSE' }]
   },
   // Humans
-  [UnitType.HUMAN_MARINE]: {} as any,
-  [UnitType.HUMAN_RIOT]: {} as any,
-  [UnitType.HUMAN_PYRO]: {} as any,
-  [UnitType.HUMAN_SNIPER]: {} as any,
-  [UnitType.HUMAN_TANK]: {} as any,
+  [UnitType.HUMAN_MARINE]: {
+      id: UnitType.HUMAN_MARINE,
+      name: '步枪兵 (Marine)',
+      baseStats: { hp: 80, damage: 15, range: 200, speed: 0, attackSpeed: 1.0, width: 20, height: 32, color: 0x9ca3af, armor: 10 },
+      baseCost: {} as any, growthFactors: {} as any, slots: [], baseLoadCapacity: 0,
+      elementConfig: { type: 'PHYSICAL' }
+  },
+  [UnitType.HUMAN_RIOT]: {
+      id: UnitType.HUMAN_RIOT,
+      name: '防暴盾卫 (Riot)',
+      baseStats: { hp: 300, damage: 10, range: 50, speed: 0, attackSpeed: 1.5, width: 30, height: 34, color: 0x1e3a8a, armor: 50 },
+      baseCost: {} as any, growthFactors: {} as any, slots: [], baseLoadCapacity: 0,
+      elementConfig: { type: 'PHYSICAL' }
+  },
+  [UnitType.HUMAN_PYRO]: {
+      id: UnitType.HUMAN_PYRO,
+      name: '火焰兵 (Pyro)',
+      baseStats: { hp: 150, damage: 5, range: 120, speed: 0, attackSpeed: 0.1, width: 24, height: 32, color: 0xea580c, armor: 20 },
+      baseCost: {} as any, growthFactors: {} as any, slots: [], baseLoadCapacity: 0,
+      elementConfig: { type: 'THERMAL', statusPerHit: 4 } // High tick rate means fast stacking
+  },
+  [UnitType.HUMAN_SNIPER]: {
+      id: UnitType.HUMAN_SNIPER,
+      name: '狙击手 (Sniper)',
+      baseStats: { hp: 60, damage: 100, range: 500, speed: 0, attackSpeed: 3.5, width: 18, height: 30, color: 0x166534, armor: 5 },
+      baseCost: {} as any, growthFactors: {} as any, slots: [], baseLoadCapacity: 0,
+      elementConfig: { type: 'PHYSICAL' }
+  },
+  [UnitType.HUMAN_TANK]: {
+      id: UnitType.HUMAN_TANK,
+      name: '步行机甲 (Mech)',
+      baseStats: { hp: 1500, damage: 60, range: 250, speed: 0, attackSpeed: 2.0, width: 50, height: 60, color: 0x475569, armor: 80 },
+      baseCost: {} as any, growthFactors: {} as any, slots: [], baseLoadCapacity: 0,
+      elementConfig: { type: 'VOLTAIC', statusPerHit: 25 }
+  }
 };
 
-// BIO-PLUGINS DEFINITIONS
 export const BIO_PLUGINS: Record<string, BioPluginConfig> = {
     'chitin_growth': {
         id: 'chitin_growth', name: '几丁质增生', description: '硬化甲壳', polarity: 'DEFENSE',
@@ -247,9 +263,14 @@ export const BIO_PLUGINS: Record<string, BioPluginConfig> = {
         stats: [{ stat: 'hp', value: 0.2 }], statGrowth: 1 
     },
     'toxin_sac': {
-        id: 'toxin_sac', name: '毒素囊', description: '攻击附带毒素', polarity: 'ATTACK',
+        id: 'toxin_sac', name: '腐蚀腺体', description: '攻击附带剧毒', polarity: 'ATTACK',
         baseCost: 8, costPerRank: 2, maxRank: 5, rarity: 'COMMON',
         stats: [{ stat: 'elementalDmg', value: 5, element: 'TOXIN', isFlat: true }], statGrowth: 0.5 
+    },
+    'pyro_gland': {
+        id: 'pyro_gland', name: '放热腺体', description: '攻击附带热能灼烧', polarity: 'ATTACK',
+        baseCost: 12, costPerRank: 2, maxRank: 5, rarity: 'RARE',
+        stats: [{ stat: 'elementalDmg', value: 3, element: 'THERMAL', isFlat: true }], statGrowth: 0.5
     },
     'metabolic_boost': {
         id: 'metabolic_boost', name: '代谢加速', description: '移动速度提升', polarity: 'FUNCTION',
@@ -260,47 +281,16 @@ export const BIO_PLUGINS: Record<string, BioPluginConfig> = {
         id: 'adrenal_surge', name: '肾上腺激增', description: '攻速大幅提升，但降低防御', polarity: 'ATTACK',
         baseCost: 15, costPerRank: 3, maxRank: 5, rarity: 'RARE',
         stats: [{ stat: 'attackSpeed', value: 0.25 }, { stat: 'hp', value: -0.1 }], statGrowth: 0.2
-    },
-    'regen_tissue': {
-        id: 'regen_tissue', name: '再生组织', description: '缓慢恢复生命值 (TODO)', polarity: 'DEFENSE',
-        baseCost: 12, costPerRank: 2, maxRank: 3, rarity: 'RARE',
-        stats: [{ stat: 'hp', value: 0.3 }], statGrowth: 0.5
     }
 };
 export { BIO_PLUGINS as EXISTING_PLUGINS } from './constants'; 
 
-// RE-DECLARING PLUGINS FROM PREVIOUS
-export const ELEMENT_COLORS = {
+export const ELEMENT_COLORS: Record<ElementType, number> = {
     PHYSICAL: 0xffffff,
-    TOXIN: 0x4ade80, // Green
-    FIRE: 0xf87171, // Red
-    ICE: 0x60a5fa, // Blue
-    ELECTRIC: 0xfacc15 // Yellow
-};
-
-
-// ENEMY TEMPLATES
-export const HUMAN_STATS: Partial<Record<UnitType, any>> = {
-  [UnitType.HUMAN_MARINE]: {
-    hp: 80, maxHp: 80, damage: 20, range: 200, speed: 0, attackSpeed: 1.2, width: 20, height: 32, color: 0x9ca3af, 
-    element: 'PHYSICAL'
-  },
-  [UnitType.HUMAN_RIOT]: {
-    hp: 250, maxHp: 250, damage: 12, range: 50, speed: 0, attackSpeed: 1.5, width: 30, height: 34, color: 0x1e3a8a,
-    element: 'PHYSICAL'
-  },
-  [UnitType.HUMAN_PYRO]: {
-    hp: 120, maxHp: 120, damage: 8, range: 100, speed: 0, attackSpeed: 0.2, width: 24, height: 32, color: 0xea580c,
-    element: 'FIRE'
-  },
-  [UnitType.HUMAN_SNIPER]: {
-    hp: 50, maxHp: 50, damage: 90, range: 500, speed: 0, attackSpeed: 4.0, width: 18, height: 30, color: 0x166534,
-    element: 'PHYSICAL', critChance: 0.5, critDamage: 2.5
-  },
-  [UnitType.HUMAN_TANK]: {
-    hp: 1200, maxHp: 1200, damage: 50, range: 250, speed: 0, attackSpeed: 2.0, width: 50, height: 60, color: 0x475569,
-    element: 'ELECTRIC'
-  }
+    TOXIN: 0x4ade80,   // Green
+    THERMAL: 0xf87171, // Red/Orange
+    CRYO: 0x60a5fa,    // Blue
+    VOLTAIC: 0xfacc15  // Yellow
 };
 
 export const INITIAL_REGIONS_CONFIG: RegionData[] = [
@@ -384,7 +374,7 @@ export const INITIAL_REGIONS_CONFIG: RegionData[] = [
 ];
 
 export const INITIAL_GAME_STATE: GameSaveData = {
-    resources: { biomass: 50, minerals: 0, enzymes: 0, larva: 1000, dna: 0, mutagen: 0 }, // Start with 50 Biomass
+    resources: { biomass: 50, minerals: 0, enzymes: 0, larva: 1000, dna: 0, mutagen: 0 },
     hive: {
         unlockedUnits: {
             [UnitType.MELEE]: { 
@@ -409,7 +399,7 @@ export const INITIAL_GAME_STATE: GameSaveData = {
         unitStockpile: {
             [UnitType.MELEE]: 10, 
             [UnitType.RANGED]: 0,
-            [UnitType.QUEEN]: 1, // Start with 1 Queen
+            [UnitType.QUEEN]: 1, 
             [UnitType.HUMAN_MARINE]: 0,
             [UnitType.HUMAN_RIOT]: 0,
             [UnitType.HUMAN_PYRO]: 0,
@@ -423,27 +413,20 @@ export const INITIAL_GAME_STATE: GameSaveData = {
             queenTimer: 0
         },
         metabolism: {
-            // Tier 1
-            villiCount: 1, // Start with 1 Villi
+            villiCount: 1, 
             taprootCount: 0,
             geyserCount: 0,
             breakerCount: 0,
-            // Tier 2
             fermentingSacCount: 0,
             refluxPumpCount: 0,
             thermalCrackerCount: 0,
             fleshBoilerCount: 0,
-            
             crackerHeat: 0,
             crackerOverheated: false,
-
-            // Tier 3
             thoughtSpireCount: 0,
             hiveMindCount: 0,
             akashicRecorderCount: 0,
-            
             spireAccumulator: 0,
-            
             storageCount: 0,
             supplyCount: 0
         },
