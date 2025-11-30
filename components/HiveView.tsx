@@ -240,7 +240,7 @@ export const HiveView: React.FC<HiveViewProps> = ({
         <div className="animate-in fade-in slide-in-from-right-4 duration-300 pb-20 space-y-8 p-8 max-w-7xl mx-auto">
              <div className="flex justify-between items-end mb-4">
                 <div>
-                    <h3 className="text-2xl font-black text-green-500 uppercase tracking-widest mb-1">代谢工程 (Metabolism)</h3>
+                    <h3 className="text-2xl font-black text-green-500 uppercase tracking-widest mb-1">生产工程 (Metabolism)</h3>
                     <p className="text-gray-500 text-sm">Optimize the resource conversion loops.</p>
                 </div>
             </div>
@@ -618,7 +618,7 @@ export const HiveView: React.FC<HiveViewProps> = ({
                  1. 孵化 (Birthing)
              </button>
              <button onClick={() => setActiveSection(HiveSection.METABOLISM)} className={`text-left px-4 py-3 rounded text-sm font-bold uppercase tracking-wider transition-colors border-l-4 ${activeSection === HiveSection.METABOLISM ? 'bg-green-900/30 text-white border-green-500' : 'border-transparent hover:bg-gray-900 text-gray-500'}`}>
-                 2. 代谢 (Metabolism)
+                 2. 生产 (Metabolism)
              </button>
              <button onClick={() => setActiveSection(HiveSection.GRAFTING)} className={`text-left px-4 py-3 rounded text-sm font-bold uppercase tracking-wider transition-colors border-l-4 ${activeSection === HiveSection.GRAFTING ? 'bg-purple-900/30 text-white border-purple-500' : 'border-transparent hover:bg-gray-900 text-gray-500'}`}>
                  3. 嫁接 (Grafting)

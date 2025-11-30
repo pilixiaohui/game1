@@ -97,7 +97,7 @@ export const METABOLISM_FACILITIES = {
     },
     GEYSER: {
         NAME: "酸蚀喷泉 (Acid Geyser)",
-        DESC: "解锁智能代谢（自动化）的阈值设施。",
+        DESC: "解锁智能生产（自动化）的阈值设施。",
         BASE_COST: 12000, 
         GROWTH: 1.12,
         BASE_RATE: 85.0,
